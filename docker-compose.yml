@@ -1,0 +1,25 @@
+version: '3.8'
+services:
+  db:
+    image: "postgres:16"
+    command: postgres -c shared_buffers=512MB -c work_mem=16MB -c max_connections=200
+    restart: unless-stopped
+    # Healthcheck from https://stackoverflow.com/questions/46516584/docker-check-if-postgres-is-ready
+    healthcheck:
+      test: /usr/bin/pg_isready -U postgres
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./init_db.sh:/docker-entrypoint-initdb.d/001_init_bsky_db.sh
+    environment:
+      - POSTGRES_PASSWORD=coolblueskyStuff321
+    ports:
+      # We probably don't want to expose our db to the internet, so localhost-only.
+      # This allows us to inspect the database from the host.
+      - "127.0.0.1:5434:5432"
+    shm_size: 512MB
+
+volumes:
+  pg_data:
