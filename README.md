@@ -1,14 +1,38 @@
 # bluesky_downloader
-Tools to Download the Bluesky Network
 
+Tools to Download and save data from the Bluesky Network.
 
 ## Installation
 
-The `bluesky-repo-downloader` needs Go 1.22 to build.
+Needs a recent version of Go to run.
 Some things need a Postgres database to be accessible on `localhost:5434`.
 This is currently done via docker compose.
 
 ## Usage
+
+### `bluesky-firehose-logger`
+
+This logs all messages broadcast by the firehose to disk.
+
+Basic usage:
+```
+go run ./cmd/bluesky-firehose-logger/main.go
+```
+Quit with `Ctrl-C`.
+
+It needs a Postgres database running on `localhost:5434`, see [init_db.sh](init_db.sh) for initial setup.
+This can be achieved by running `docker compose up`.
+
+The tool connects to the firehose and logs all received messages to disk with a timestamp attached to them.
+The files are saved to a hardcoded `firehose_logs/` directory.
+Each log file is named after the Unix timestamp at which it was created.
+Every `10_000` entries, the log file is rotated and compressed.
+On shutdown, the current file is compressed.
+
+A cursor pointing to the last processed sequence number is saved in the Postgres database.
+This is updated every 50 events, and when the program shuts down.
+This should make it possible to restart without losing any events.
+In case of a crash, at most 50 events could be duplicated at the end of the old and the beginning of the new log.
 
 ### `bluesky-repo-downloader`
 
