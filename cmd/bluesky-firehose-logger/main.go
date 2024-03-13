@@ -522,8 +522,12 @@ func main() {
 
 	fmt.Println("Press Ctrl-C to stop")
 
-	// Block until a signal is received.
-	<-c
+	// Block until a signal is received or the server dies.
+	select {
+	case <-c: // Ctrl-C, ok...
+	case err = <-server.closed:
+		log.Error("server died, shutting down", "err", err)
+	}
 
 	fmt.Println("Shutting down...")
 	r := make(chan error)
