@@ -28,7 +28,7 @@ var (
 	POSTGRES_DSN        = "postgres://bluesky_indexer:bluesky_indexer@localhost:5434/bluesky_indexer"
 )
 
-type Server struct {
+type Subscriber struct {
 	db     *gorm.DB
 	bgsUrl url.URL
 	logger *slog.Logger
@@ -41,7 +41,7 @@ type LastSeq struct {
 	Seq int64
 }
 
-func (s *Server) getLastCursor() (int64, error) {
+func (s *Subscriber) getLastCursor() (int64, error) {
 	var lastSeq LastSeq
 	if err := s.db.Find(&lastSeq).Error; err != nil {
 		return 0, err
@@ -54,11 +54,11 @@ func (s *Server) getLastCursor() (int64, error) {
 	return lastSeq.Seq, nil
 }
 
-func (s *Server) updateLastCursor(curs int64) error {
+func (s *Subscriber) updateLastCursor(curs int64) error {
 	return s.db.Model(LastSeq{}).Where("id = 1").Update("seq", curs).Error
 }
 
-func (s *Server) Run(ctx context.Context) error {
+func (s *Subscriber) Run(ctx context.Context) error {
 	defer func() { close(s.closed) }()
 	cur, err := s.getLastCursor()
 	if err != nil {
@@ -290,7 +290,7 @@ func setupDB() (*gorm.DB, error) {
 	return db, nil
 }
 
-func doStuff() (*Server, error) {
+func setupSubscriber() (*Subscriber, error) {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
@@ -317,10 +317,10 @@ func doStuff() (*Server, error) {
 		return nil, err
 	}
 
-	s := &Server{
+	s := &Subscriber{
 		db:     db,
 		bgsUrl: *u,
-		logger: logger.With("component", "server"),
+		logger: logger.With("component", "subscriber"),
 		writer: writer,
 		closed: make(chan error),
 	}
@@ -331,14 +331,14 @@ func doStuff() (*Server, error) {
 }
 
 func main() {
-	server, err := doStuff()
+	subscriber, err := setupSubscriber()
 	if err != nil {
 		panic(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 
 	go func() {
-		err := server.Run(ctx)
+		err := subscriber.Run(ctx)
 		if err != nil {
 			panic(err)
 		}
@@ -352,18 +352,18 @@ func main() {
 
 	fmt.Println("Press Ctrl-C to stop")
 
-	// Block until a signal is received or the server dies.
+	// Block until a signal is received or the subscriber dies.
 	select {
 	case <-c: // Ctrl-C, ok...
-	case err = <-server.closed:
-		log.Error("server died, shutting down", "err", err)
+	case err = <-subscriber.closed:
+		log.Error("subscriber died, shutting down", "err", err)
 	}
 
 	fmt.Println("Shutting down...")
 	r := make(chan error)
 	go func() {
 		cancel()
-		for err := range server.closed {
+		for err := range subscriber.closed {
 			if err != nil {
 				log.Error(err)
 			}
