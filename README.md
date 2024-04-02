@@ -10,6 +10,30 @@ This is currently done via docker compose.
 
 ## Usage
 
+### `bluesky-labeler-logger`
+
+This logs all labels produced by a labeler.
+
+Basic usage:
+```
+go run ./cmd/bluesky-labeler-logger/main.go <labeler DID>
+```
+Quit with `Ctrl-C`.
+
+It needs a Postgres database running on `localhost:5434`, see [init_db.sh](init_db.sh) for initial setup.
+This can be achieved by running `docker compose up`.
+
+The tool connects to the firehose and logs all received messages to disk with a timestamp attached to them.
+The files are saved to a hardcoded `labeler_logs/` directory, with subdirectories per DID.
+Each log file is named after the Unix timestamp at which it was created.
+Every `1_000` entries, the log file is rotated and compressed.
+On shutdown, the current file is compressed.
+
+A cursor pointing to the last processed sequence number is saved in the Postgres database.
+This is updated every 50 events, and when the program shuts down.
+This should make it possible to restart without losing any events.
+In case of a crash, at most 50 events could be duplicated at the end of the old and the beginning of the new log.
+
 ### `bluesky-firehose-logger`
 
 This logs all messages broadcast by the firehose to disk.
