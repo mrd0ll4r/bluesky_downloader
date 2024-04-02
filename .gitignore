@@ -22,3 +22,9 @@ go.work
 
 # The downloaded repository data
 /repos
+
+# The firehose logs
+/firehose_logs
+
+# The labeler logs
+/labeler_logs
