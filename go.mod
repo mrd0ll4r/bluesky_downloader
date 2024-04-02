@@ -3,14 +3,14 @@ module bluesky-downloader
 go 1.21
 
 require (
-	github.com/bluesky-social/indigo v0.0.0-20240227190204-ea981ebfb84a
+	github.com/bluesky-social/indigo v0.0.0-20240323010211-65fc18540442
 	github.com/carlmjohnson/versioninfo v0.22.5
 	github.com/gorilla/websocket v1.5.1
 	github.com/ipfs/go-cid v0.4.1
 	github.com/ipld/go-car/v2 v2.13.1
 	github.com/labstack/gommon v0.4.1
 	github.com/polydawn/refmt v0.89.1-0.20221221234430-40501e09de1f
-	github.com/whyrusleeping/cbor-gen v0.0.0-20240201211319-bf2168ca937c
+	github.com/whyrusleeping/cbor-gen v0.1.1-0.20240311221002-68b9f235c302
 	go.opentelemetry.io/otel v1.21.0
 	golang.org/x/sync v0.5.0
 	golang.org/x/time v0.3.0
@@ -61,7 +61,7 @@ require (
 	github.com/jbenet/goprocess v0.1.4 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
-	github.com/klauspost/cpuid/v2 v2.2.6 // indirect
+	github.com/klauspost/cpuid/v2 v2.2.7 // indirect
 	github.com/lestrrat-go/blackmagic v1.0.1 // indirect
 	github.com/lestrrat-go/httpcc v1.0.1 // indirect
 	github.com/lestrrat-go/httprc v1.0.4 // indirect
@@ -99,10 +99,10 @@ require (
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.26.0 // indirect
-	golang.org/x/crypto v0.17.0 // indirect
+	golang.org/x/crypto v0.21.0 // indirect
 	golang.org/x/exp v0.0.0-20231110203233-9a3e6036ecaa // indirect
-	golang.org/x/net v0.18.0 // indirect
-	golang.org/x/sys v0.15.0 // indirect
+	golang.org/x/net v0.21.0 // indirect
+	golang.org/x/sys v0.18.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
 	google.golang.org/protobuf v1.31.0 // indirect
