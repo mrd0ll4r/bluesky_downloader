@@ -1,27 +1,22 @@
 package main
 
 import (
-	"compress/gzip"
+	"bluesky-downloader/event"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/bluesky-social/indigo/api/atproto"
 	"github.com/bluesky-social/indigo/events"
 	"github.com/bluesky-social/indigo/events/schedulers/sequential"
-	"github.com/bluesky-social/indigo/xrpc"
-	"github.com/carlmjohnson/versioninfo"
 	"github.com/gorilla/websocket"
 	"github.com/labstack/gommon/log"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
-	"path"
 	"strings"
 	"time"
 )
@@ -33,157 +28,12 @@ var (
 	POSTGRES_DSN        = "postgres://bluesky_indexer:bluesky_indexer@localhost:5434/bluesky_indexer"
 )
 
-type Writer struct {
-	baseDir          string
-	eventsIn         chan jsonEvent
-	logger           *slog.Logger
-	numEventsPerFile int
-
-	curFile      *os.File
-	curEncoder   *json.Encoder
-	curPath      string
-	curNumEvents int
-
-	stop chan struct{}
-}
-
-func NewWriter(baseDir string, logger *slog.Logger, numEventsPerFile int) (*Writer, error) {
-	err := os.MkdirAll(baseDir, 0777)
-	if err != nil {
-		return nil, fmt.Errorf("unable to mkdir: %w", err)
-	}
-
-	w := &Writer{
-		baseDir:          baseDir,
-		eventsIn:         make(chan jsonEvent),
-		logger:           logger,
-		numEventsPerFile: numEventsPerFile,
-		stop:             make(chan struct{}),
-	}
-
-	return w, nil
-}
-
-func (w *Writer) Stop() error {
-	w.logger.Info("stopping writer")
-	close(w.eventsIn)
-
-	<-w.stop
-	w.logger.Info("writer stopped, compressing last written file...")
-
-	if w.curFile != nil {
-		return w.backgroundCompress(w.curFile, w.curPath)
-	}
-
-	return nil
-}
-
-func (w *Writer) backgroundCompress(f *os.File, originalPath string) (err error) {
-	gzipPath := fmt.Sprintf("%s.gz", originalPath)
-
-	defer func() {
-		if err != nil {
-			w.logger.Warn("background compression failed, not removing source file, attempting to remove potentially-incomplete gzipped file", "originalPath", originalPath)
-			e := os.Remove(gzipPath)
-			if e != nil {
-				w.logger.Warn("unable to remove gzipped file", "err", e)
-			}
-		} else {
-			w.logger.Info("background compression complete, removing source file", "originalPath", originalPath)
-			e := os.Remove(originalPath)
-			if e != nil {
-				w.logger.Warn("unable to remove original file", "err", e)
-			}
-		}
-	}()
-	defer f.Close()
-
-	gzipF, err := os.Create(gzipPath)
-	if err != nil {
-		return fmt.Errorf("unable to create gzip file: %w", err)
-	}
-	defer gzipF.Close()
-
-	gzipW, err := gzip.NewWriterLevel(gzipF, gzip.BestCompression)
-	if err != nil {
-		return fmt.Errorf("unable to create gzip writer: %w", err)
-	}
-	defer gzipW.Close()
-
-	_, err = f.Seek(0, io.SeekStart)
-	if err != nil {
-		return fmt.Errorf("unable to seek: %w", err)
-	}
-
-	_, err = io.Copy(gzipW, f)
-	if err != nil {
-		return fmt.Errorf("unable to copy: %w", err)
-	}
-
-	return nil
-}
-
-func (w *Writer) createFile() (*os.File, string, error) {
-	ts := time.Now().Unix()
-	p := path.Join(w.baseDir, fmt.Sprintf("%d.json", ts))
-
-	f, err := os.Create(p)
-	return f, p, err
-}
-
-func (w *Writer) maybeRotateFile() error {
-	if w.curNumEvents >= NUM_EVENTS_PER_FILE {
-		// Rotate, avoid data rate
-		curFile := w.curFile
-		curPath := w.curPath
-		go func() {
-			err := w.backgroundCompress(curFile, curPath)
-			if err != nil {
-				w.logger.Error("unable to compress file", "err", err)
-			}
-		}()
-	}
-	if w.curFile == nil || w.curNumEvents >= NUM_EVENTS_PER_FILE {
-		// Create new file
-		f, p, err := w.createFile()
-		if err != nil {
-			return err
-		}
-		w.curFile = f
-		w.curEncoder = json.NewEncoder(f)
-		w.curPath = p
-		w.curNumEvents = 0
-	}
-
-	return nil
-}
-
-func (w *Writer) Run() {
-	defer func() {
-		w.logger.Info("writer loop shut down")
-		close(w.stop)
-	}()
-	for job := range w.eventsIn {
-		err := w.maybeRotateFile()
-		if err != nil {
-			// TODO what now?
-			panic(err)
-		}
-		err = w.curEncoder.Encode(job)
-		if err != nil {
-			w.logger.Error("unable to encode", "job", job)
-		}
-		w.curNumEvents++
-	}
-	w.logger.Info("shutting down writer loop")
-}
-
 type Server struct {
-	db      *gorm.DB
-	bgsxrpc *xrpc.Client
-	logger  *slog.Logger
-	writer  *Writer
-	closed  chan error
+	db     *gorm.DB
+	bgsUrl url.URL
+	logger *slog.Logger
+	writer *event.Writer
+	closed chan error
 }
 
 type LastSeq struct {
@@ -216,15 +66,14 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	d := websocket.DefaultDialer
-	u, err := url.Parse("wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos")
-	if err != nil {
-		return fmt.Errorf("invalid bgshost URI: %w", err)
-	}
+	u := s.bgsUrl
+	u.Scheme = "wss"
+	u.Path = "/xrpc/com.atproto.sync.subscribeRepos"
 	if cur != 0 {
 		u.RawQuery = fmt.Sprintf("cursor=%d", cur)
 	}
 	con, _, err := d.Dial(u.String(), http.Header{
-		"User-Agent": []string{fmt.Sprintf("firehose-logger/%s", versioninfo.Short())},
+		"User-Agent": []string{USER_AGENT},
 	})
 	if err != nil {
 		return fmt.Errorf("events dial failed: %w", err)
@@ -243,11 +92,11 @@ func (s *Server) Run(ctx context.Context) error {
 			logEvt := s.logger.With("repo", evt.Repo, "rev", evt.Rev, "seq", evt.Seq)
 			logEvt.Debug("REPO_COMMIT", "ops", evt.Ops)
 
-			jsonEvent := jsonEvent{
+			jsonEvent := event.JsonEvent{
 				Received:   time.Now(),
 				RepoCommit: evt,
 			}
-			s.writer.eventsIn <- jsonEvent
+			s.writer.WriteEvent(jsonEvent)
 
 			return nil
 		},
@@ -263,11 +112,11 @@ func (s *Server) Run(ctx context.Context) error {
 			logEvt := s.logger.With("did", evt.Did, "seq", evt.Seq)
 			logEvt.Debug("REPO_HANDLE", "handle", evt.Handle)
 
-			jsonEvent := jsonEvent{
+			jsonEvent := event.JsonEvent{
 				Received:   time.Now(),
 				RepoHandle: evt,
 			}
-			s.writer.eventsIn <- jsonEvent
+			s.writer.WriteEvent(jsonEvent)
 
 			return nil
 		},
@@ -283,11 +132,11 @@ func (s *Server) Run(ctx context.Context) error {
 			logEvt := s.logger.With("did", evt.Did, "seq", evt.Seq)
 			logEvt.Debug("REPO_IDENTITY")
 
-			jsonEvent := jsonEvent{
+			jsonEvent := event.JsonEvent{
 				Received:     time.Now(),
 				RepoIdentity: evt,
 			}
-			s.writer.eventsIn <- jsonEvent
+			s.writer.WriteEvent(jsonEvent)
 
 			return nil
 		},
@@ -297,11 +146,11 @@ func (s *Server) Run(ctx context.Context) error {
 			logEvt := s.logger.With("name", evt.Name)
 			logEvt.Debug("REPO_INFO", "message", evt.Message)
 
-			jsonEvent := jsonEvent{
+			jsonEvent := event.JsonEvent{
 				Received: time.Now(),
 				RepoInfo: evt,
 			}
-			s.writer.eventsIn <- jsonEvent
+			s.writer.WriteEvent(jsonEvent)
 
 			return nil
 		},
@@ -317,11 +166,11 @@ func (s *Server) Run(ctx context.Context) error {
 			logEvt := s.logger.With("did", evt.Did, "seq", evt.Seq)
 			logEvt.Debug("REPO_MIGRATE", "migrate_to", evt.MigrateTo)
 
-			jsonEvent := jsonEvent{
+			jsonEvent := event.JsonEvent{
 				Received:    time.Now(),
 				RepoMigrate: evt,
 			}
-			s.writer.eventsIn <- jsonEvent
+			s.writer.WriteEvent(jsonEvent)
 
 			return nil
 		},
@@ -337,11 +186,11 @@ func (s *Server) Run(ctx context.Context) error {
 			logEvt := s.logger.With("did", evt.Did, "seq", evt.Seq)
 			logEvt.Debug("REPO_TOMBSTONE")
 
-			jsonEvent := jsonEvent{
+			jsonEvent := event.JsonEvent{
 				Received:      time.Now(),
 				RepoTombstone: evt,
 			}
-			s.writer.eventsIn <- jsonEvent
+			s.writer.WriteEvent(jsonEvent)
 
 			return nil
 		},
@@ -357,11 +206,11 @@ func (s *Server) Run(ctx context.Context) error {
 			logEvt := s.logger.With("seq", evt.Seq)
 			logEvt.Debug("LABEL_LABELS", "labels", evt.Labels)
 
-			jsonEvent := jsonEvent{
+			jsonEvent := event.JsonEvent{
 				Received:    time.Now(),
 				LabelLabels: evt,
 			}
-			s.writer.eventsIn <- jsonEvent
+			s.writer.WriteEvent(jsonEvent)
 
 			return nil
 		},
@@ -370,25 +219,25 @@ func (s *Server) Run(ctx context.Context) error {
 
 			s.logger.Debug("LABEL_INFO", "name", evt.Name, "message", evt.Message)
 
-			jsonEvent := jsonEvent{
+			jsonEvent := event.JsonEvent{
 				Received:  time.Now(),
 				LabelInfo: evt,
 			}
-			s.writer.eventsIn <- jsonEvent
+			s.writer.WriteEvent(jsonEvent)
 
 			return nil
 		},
 		Error: func(evt *events.ErrorFrame) error {
 			s.logger.Info("ERROR_FRAME", "evt", evt)
 
-			jsonEvent := jsonEvent{
+			jsonEvent := event.JsonEvent{
 				Received: time.Now(),
-				ErrorFrame: &JsonErrorFrame{
+				ErrorFrame: &event.JsonErrorFrame{
 					Error:   evt.Error,
 					Message: evt.Message,
 				},
 			}
-			s.writer.eventsIn <- jsonEvent
+			s.writer.WriteEvent(jsonEvent)
 
 			return nil
 		},
@@ -418,24 +267,6 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-type JsonErrorFrame struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
-}
-
-type jsonEvent struct {
-	Received      time.Time                             `json:"received"`
-	RepoCommit    *atproto.SyncSubscribeRepos_Commit    `json:"repo_commit"`
-	RepoHandle    *atproto.SyncSubscribeRepos_Handle    `json:"repo_handle"`
-	RepoIdentity  *atproto.SyncSubscribeRepos_Identity  `json:"repo_identity"`
-	RepoInfo      *atproto.SyncSubscribeRepos_Info      `json:"repo_info"`
-	RepoMigrate   *atproto.SyncSubscribeRepos_Migrate   `json:"repo_migrate"`
-	RepoTombstone *atproto.SyncSubscribeRepos_Tombstone `json:"repo_tombstone"`
-	LabelLabels   *atproto.LabelSubscribeLabels_Labels  `json:"label_labels"`
-	LabelInfo     *atproto.LabelSubscribeLabels_Info    `json:"label_info"`
-	ErrorFrame    *JsonErrorFrame                       `json:"error_frame"`
 }
 
 func setupDB() (*gorm.DB, error) {
@@ -476,23 +307,22 @@ func doStuff() (*Server, error) {
 		return nil, err
 	}
 
-	bgshttp := "https://bsky.network"
-	bgsxrpc := &xrpc.Client{
-		Host: bgshttp,
+	u, err := url.Parse("https://bsky.network")
+	if err != nil {
+		return nil, err
 	}
-	bgsxrpc.UserAgent = &USER_AGENT
 
-	writer, err := NewWriter(OUTPUT_DIR, logger.With("component", "writer"), NUM_EVENTS_PER_FILE)
+	writer, err := event.NewWriter(OUTPUT_DIR, logger.With("component", "writer"), NUM_EVENTS_PER_FILE)
 	if err != nil {
 		return nil, err
 	}
 
 	s := &Server{
-		db:      db,
-		bgsxrpc: bgsxrpc,
-		logger:  logger.With("component", "server"),
-		writer:  writer,
-		closed:  make(chan error),
+		db:     db,
+		bgsUrl: *u,
+		logger: logger.With("component", "server"),
+		writer: writer,
+		closed: make(chan error),
 	}
 
 	go writer.Run()
