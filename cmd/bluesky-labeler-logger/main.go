@@ -11,7 +11,6 @@ import (
 	"github.com/bluesky-social/indigo/events"
 	"github.com/bluesky-social/indigo/events/schedulers/sequential"
 	"github.com/gorilla/websocket"
-	"github.com/labstack/gommon/log"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"log/slog"
@@ -23,13 +22,15 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	flag "github.com/spf13/pflag"
 )
 
 var (
-	USER_AGENT          = "github.com/mrd0ll4r/bluesky_downloader/labeler_logger"
-	OUTPUT_DIR          = "labeler_logs"
-	NUM_EVENTS_PER_FILE = 1_000
-	POSTGRES_DSN        = "postgres://bluesky_indexer:bluesky_indexer@localhost:5434/bluesky_indexer"
+	USER_AGENT                  = "github.com/mrd0ll4r/bluesky_downloader/labeler_logger"
+	DEFAULT_OUTPUT_DIR          = "./labeler_logs"
+	DEFAULT_NUM_EVENTS_PER_FILE = uint(1_000)
+	DEFAULT_POSTGRES_DSN        = "postgres://bluesky_indexer:bluesky_indexer@localhost:5434/bluesky_indexer"
 )
 
 type Subscriber struct {
@@ -231,8 +232,8 @@ func (s *Subscriber) Run(ctx context.Context) error {
 	return nil
 }
 
-func setupDB() (*gorm.DB, error) {
-	db, err := gorm.Open(postgres.Open(POSTGRES_DSN), &gorm.Config{
+func setupDB(dsn string) (*gorm.DB, error) {
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		SkipDefaultTransaction: true,
 		TranslateError:         true,
 	})
@@ -252,13 +253,8 @@ func setupDB() (*gorm.DB, error) {
 	return db, nil
 }
 
-func setupSubscriber(did syntax.DID) (*Subscriber, error) {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-	slog.SetDefault(logger)
-
-	db, err := setupDB()
+func setupSubscriber(logger *slog.Logger, did syntax.DID, baseOutputDir string, pgDsn string, entriesPerFile int) (*Subscriber, error) {
+	db, err := setupDB(pgDsn)
 	if err != nil {
 		return nil, err
 	}
@@ -301,9 +297,9 @@ func setupSubscriber(did syntax.DID) (*Subscriber, error) {
 	}
 
 	sanitizedDid := strings.ReplaceAll(ident.DID.String(), ":", "_")
-	outPath := path.Join(OUTPUT_DIR, sanitizedDid)
+	outPath := path.Join(baseOutputDir, sanitizedDid)
 
-	writer, err := event.NewWriter(outPath, logger.With("component", "writer"), NUM_EVENTS_PER_FILE)
+	writer, err := event.NewWriter(outPath, logger.With("component", "writer"), entriesPerFile)
 	if err != nil {
 		return nil, err
 	}
@@ -323,26 +319,57 @@ func setupSubscriber(did syntax.DID) (*Subscriber, error) {
 }
 
 func main() {
-	args := os.Args
-	if len(args) < 2 {
-		panic("missing args: <DID>")
+	var outputDir = flag.String("outdir", DEFAULT_OUTPUT_DIR, "Path to the base output directory")
+	var postgresDsn = flag.String("db", DEFAULT_POSTGRES_DSN, "DSN to connect to a postgres database")
+	var numEntriesPerFile = flag.Uint("entries-per-file", DEFAULT_NUM_EVENTS_PER_FILE, "The number of events after which the output file is rotated")
+	var debug = flag.Bool("debug", false, "Whether to enable debug logging")
+
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "%s [flags] <DID>\n", os.Args[0])
+		fmt.Fprintln(os.Stderr, "Arguments:")
+		fmt.Fprintf(os.Stderr, "      <DID>\t\tDID of the labeler to subscribe to\n")
+		fmt.Fprintln(os.Stderr, "Flags:")
+		flag.PrintDefaults()
 	}
 
-	d, err := syntax.ParseDID(args[1])
-	if err != nil {
-		panic(err)
+	flag.Parse()
+
+	if len(*outputDir) == 0 || len(*postgresDsn) == 0 || *numEntriesPerFile == 0 || flag.NArg() != 1 {
+		flag.Usage()
+		os.Exit(2)
 	}
 
-	subscriber, err := setupSubscriber(d)
+	logLevel := slog.LevelInfo
+	if *debug {
+		logLevel = slog.LevelDebug
+	}
+
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: logLevel,
+	}))
+	slog.SetDefault(logger)
+
+	d, err := syntax.ParseDID(flag.Arg(0))
 	if err != nil {
-		panic(err)
+		logger.Error("unable to parse DID", "err", err)
+		os.Exit(1)
+	}
+
+	subscriber, err := setupSubscriber(logger, d, *outputDir, *postgresDsn, int(*numEntriesPerFile))
+	if err != nil {
+		logger.Error("unable to set up subscriber", "err", err)
+		os.Exit(1)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 
 	go func() {
 		err := subscriber.Run(ctx)
 		if err != nil {
-			panic(err)
+			// This only returns an error if we were unable to subscribe.
+			// Later errors are passed via subscriber.closed, and handled.
+			logger.Error("unable to set up subscriber", "err", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -358,7 +385,7 @@ func main() {
 	select {
 	case <-c: // Ctrl-C, ok...
 	case err = <-subscriber.closed:
-		log.Error("subscriber died, shutting down", "err", err)
+		logger.Error("subscriber died, shutting down", "err", err)
 	}
 
 	fmt.Println("Shutting down...")
@@ -367,7 +394,7 @@ func main() {
 		cancel()
 		for err := range subscriber.closed {
 			if err != nil {
-				log.Error(err)
+				logger.Error("subscriber did not shut down cleanly", "err", err)
 			}
 		}
 		close(r)
@@ -380,7 +407,8 @@ func main() {
 	case err = <-r:
 		// We're done shutting down
 		if err != nil {
-			panic(err)
+			logger.Error("subscriber did not shut down cleanly", "err", err)
+			os.Exit(1)
 		}
 	}
 }
