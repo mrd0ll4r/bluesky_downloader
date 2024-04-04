@@ -19,21 +19,24 @@ import (
 	"os/signal"
 	"strings"
 	"time"
+
+	flag "github.com/spf13/pflag"
 )
 
 var (
-	USER_AGENT          = "github.com/mrd0ll4r/bluesky_downloader/firehose_logger"
-	OUTPUT_DIR          = "firehose_logs"
-	NUM_EVENTS_PER_FILE = 10_000
-	POSTGRES_DSN        = "postgres://bluesky_indexer:bluesky_indexer@localhost:5434/bluesky_indexer"
+	USER_AGENT                  = "github.com/mrd0ll4r/bluesky_downloader/firehose_logger"
+	DEFAULT_OUTPUT_DIR          = "firehose_logs"
+	DEFAULT_NUM_EVENTS_PER_FILE = uint(10_000)
+	DEFAULT_POSTGRES_DSN        = "postgres://bluesky_indexer:bluesky_indexer@localhost:5434/bluesky_indexer"
 )
 
 type Subscriber struct {
-	db     *gorm.DB
-	bgsUrl url.URL
-	logger *slog.Logger
-	writer *event.Writer
-	closed chan error
+	db                   *gorm.DB
+	bgsUrl               url.URL
+	logger               *slog.Logger
+	writer               *event.Writer
+	saveRepoCommitBlocks bool
+	closed               chan error
 }
 
 type LastSeq struct {
@@ -79,6 +82,12 @@ func (s *Subscriber) Run(ctx context.Context) error {
 		return fmt.Errorf("events dial failed: %w", err)
 	}
 
+	if s.saveRepoCommitBlocks {
+		s.logger.Info("saving block data for repo commits, this might take a lot of space")
+	} else {
+		s.logger.Info("not saving block data for repo commits")
+	}
+
 	rsc := &events.RepoStreamCallbacks{
 		RepoCommit: func(evt *atproto.SyncSubscribeRepos_Commit) error {
 			defer func() {
@@ -91,6 +100,11 @@ func (s *Subscriber) Run(ctx context.Context) error {
 			cur = evt.Seq
 			logEvt := s.logger.With("repo", evt.Repo, "rev", evt.Rev, "seq", evt.Seq)
 			logEvt.Debug("REPO_COMMIT", "ops", evt.Ops)
+
+			// Remove blocks, save space.
+			if !s.saveRepoCommitBlocks {
+				evt.Blocks = nil
+			}
 
 			jsonEvent := event.JsonEvent{
 				Received:   time.Now(),
@@ -269,8 +283,8 @@ func (s *Subscriber) Run(ctx context.Context) error {
 	return nil
 }
 
-func setupDB() (*gorm.DB, error) {
-	db, err := gorm.Open(postgres.Open(POSTGRES_DSN), &gorm.Config{
+func setupDB(dsn string) (*gorm.DB, error) {
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		SkipDefaultTransaction: true,
 		TranslateError:         true,
 	})
@@ -290,13 +304,8 @@ func setupDB() (*gorm.DB, error) {
 	return db, nil
 }
 
-func setupSubscriber() (*Subscriber, error) {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-	slog.SetDefault(logger)
-
-	db, err := setupDB()
+func setupSubscriber(logger *slog.Logger, baseOutputDir string, postgresDsn string, numEventsPerFile int, saveBlocks bool) (*Subscriber, error) {
+	db, err := setupDB(postgresDsn)
 	if err != nil {
 		return nil, err
 	}
@@ -312,17 +321,18 @@ func setupSubscriber() (*Subscriber, error) {
 		return nil, err
 	}
 
-	writer, err := event.NewWriter(OUTPUT_DIR, logger.With("component", "writer"), NUM_EVENTS_PER_FILE)
+	writer, err := event.NewWriter(baseOutputDir, logger.With("component", "writer"), numEventsPerFile)
 	if err != nil {
 		return nil, err
 	}
 
 	s := &Subscriber{
-		db:     db,
-		bgsUrl: *u,
-		logger: logger.With("component", "subscriber"),
-		writer: writer,
-		closed: make(chan error),
+		db:                   db,
+		bgsUrl:               *u,
+		logger:               logger.With("component", "subscriber"),
+		writer:               writer,
+		saveRepoCommitBlocks: saveBlocks,
+		closed:               make(chan error),
 	}
 
 	go writer.Run()
@@ -331,16 +341,50 @@ func setupSubscriber() (*Subscriber, error) {
 }
 
 func main() {
-	subscriber, err := setupSubscriber()
+	var outputDir = flag.String("outdir", DEFAULT_OUTPUT_DIR, "Path to the base output directory")
+	var postgresDsn = flag.String("db", DEFAULT_POSTGRES_DSN, "DSN to connect to a postgres database")
+	var numEntriesPerFile = flag.Uint("entries-per-file", DEFAULT_NUM_EVENTS_PER_FILE, "The number of events after which the output file is rotated")
+	var debug = flag.Bool("debug", false, "Whether to enable debug logging")
+	var saveBlocks = flag.Bool("save-blocks", false, "Whether to save binary block data for repo commits. This can take a lot of space.")
+
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "%s [flags]\n", os.Args[0])
+		fmt.Fprintln(os.Stderr, "Flags:")
+		flag.PrintDefaults()
+	}
+
+	flag.Parse()
+
+	if len(*outputDir) == 0 || len(*postgresDsn) == 0 || *numEntriesPerFile == 0 {
+		flag.Usage()
+		os.Exit(2)
+	}
+
+	logLevel := slog.LevelInfo
+	if *debug {
+		logLevel = slog.LevelDebug
+	}
+
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: logLevel,
+	}))
+	slog.SetDefault(logger)
+
+	subscriber, err := setupSubscriber(logger, *outputDir, *postgresDsn, int(*numEntriesPerFile), *saveBlocks)
 	if err != nil {
-		panic(err)
+		logger.Error("unable to set up subscriber", "err", err)
+		os.Exit(1)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 
 	go func() {
 		err := subscriber.Run(ctx)
 		if err != nil {
-			panic(err)
+			// This only returns an error if we were unable to subscribe.
+			// Later errors are passed via subscriber.closed, and handled.
+			logger.Error("unable to set up subscriber", "err", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -365,7 +409,7 @@ func main() {
 		cancel()
 		for err := range subscriber.closed {
 			if err != nil {
-				log.Error(err)
+				logger.Error("subscriber did not shut down cleanly", "err", err)
 			}
 		}
 		close(r)
@@ -378,7 +422,8 @@ func main() {
 	case err = <-r:
 		// We're done shutting down
 		if err != nil {
-			panic(err)
+			logger.Error("subscriber did not shut down cleanly", "err", err)
+			os.Exit(1)
 		}
 	}
 }
