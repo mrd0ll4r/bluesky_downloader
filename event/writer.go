@@ -128,13 +128,23 @@ func (w *Writer) createFile() (*os.File, string, error) {
 	ts := time.Now().Unix()
 	p := path.Join(w.baseDir, fmt.Sprintf("%d.json", ts))
 
+	// Make sure this is actually a different path than the currently-open file.
+	// This collision can happen when we have a _lot_ of events, which happens
+	// if we catch up.
+	if p == w.curPath {
+		// Crude, but this should work.
+		w.logger.Warn("sleeping a second to avoid output file name collision", "path", p)
+		time.Sleep(1 * time.Second)
+		return w.createFile()
+	}
+
 	f, err := os.Create(p)
 	return f, p, err
 }
 
 func (w *Writer) maybeRotateFile() error {
 	if w.curNumEvents >= w.numEventsPerFile {
-		// Rotate, avoid data rate
+		// Rotate, avoid data race
 		curFile := w.curFile
 		curPath := w.curPath
 		go func() {
