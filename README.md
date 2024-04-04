@@ -1,12 +1,14 @@
-# bluesky_downloader
+# Bluesky Tools
 
 Tools to Download and save data from the Bluesky Network.
 
-## Installation
+## Installation/Building
 
 Needs a recent version of Go to run.
 Some things need a Postgres database to be accessible on `localhost:5434`.
-This is currently done via docker compose.
+This is currently done via docker compose, see [docker-compose.yml](docker-compose.yml).
+
+Building the binaries can be done via `./build.sh`.
 
 ## Usage
 
@@ -16,17 +18,24 @@ This logs all labels produced by a labeler.
 
 Basic usage:
 ```
-go run ./cmd/bluesky-labeler-logger/main.go <labeler DID>
+./bluesky-labeler-logger [flags] <DID>
+Arguments:
+      <DID>		DID of the labeler to subscribe to
+Flags:
+      --db string               DSN to connect to a postgres database (default "postgres://bluesky_indexer:bluesky_indexer@localhost:5434/bluesky_indexer")
+      --debug                   Whether to enable debug logging
+      --entries-per-file uint   The number of events after which the output file is rotated (default 1000)
+      --outdir string           Path to the base output directory (default "./labeler_logs")
 ```
 Quit with `Ctrl-C`.
 
-It needs a Postgres database running on `localhost:5434`, see [init_db.sh](init_db.sh) for initial setup.
+It needs a Postgres database running somewhere, see [init_db.sh](init_db.sh) for initial setup to use the default configuration.
 This can be achieved by running `docker compose up`.
 
 The tool connects to the firehose and logs all received messages to disk with a timestamp attached to them.
-The files are saved to a hardcoded `labeler_logs/` directory, with subdirectories per DID.
+The files are saved to `outdir`, with subdirectories per DID.
 Each log file is named after the Unix timestamp at which it was created.
-Every `1_000` entries, the log file is rotated and compressed.
+Every `entries-per-file` entries, the log file is rotated and compressed.
 On shutdown, the current file is compressed.
 
 A cursor pointing to the last processed sequence number is saved in the Postgres database.
@@ -40,18 +49,28 @@ This logs all messages broadcast by the firehose to disk.
 
 Basic usage:
 ```
-go run ./cmd/bluesky-firehose-logger/main.go
+./bluesky-firehose-logger [flags]
+Flags:
+      --db string               DSN to connect to a postgres database (default "postgres://bluesky_indexer:bluesky_indexer@localhost:5434/bluesky_indexer")
+      --debug                   Whether to enable debug logging
+      --entries-per-file uint   The number of events after which the output file is rotated (default 10000)
+      --outdir string           Path to the base output directory (default "firehose_logs")
+      --save-blocks             Whether to save binary block data for repo commits. This can take a lot of space.
 ```
 Quit with `Ctrl-C`.
 
-It needs a Postgres database running on `localhost:5434`, see [init_db.sh](init_db.sh) for initial setup.
+It needs a Postgres database running somewhere, see [init_db.sh](init_db.sh) for initial setup to use the default configuration.
 This can be achieved by running `docker compose up`.
 
 The tool connects to the firehose and logs all received messages to disk with a timestamp attached to them.
-The files are saved to a hardcoded `firehose_logs/` directory.
+The files are saved to `outdir`.
 Each log file is named after the Unix timestamp at which it was created.
-Every `10_000` entries, the log file is rotated and compressed.
+Every `entries-per-file` entries, the log file is rotated and compressed.
 On shutdown, the current file is compressed.
+
+If `--save-blocks` is provided, the block data attached to each repo commit is saved in the output.
+This is encoded as base64, and quite large.
+For longer-running operations, unless absolutely required, it's recommended to turn this off.
 
 A cursor pointing to the last processed sequence number is saved in the Postgres database.
 This is updated every 50 events, and when the program shuts down.
