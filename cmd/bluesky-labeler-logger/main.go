@@ -71,6 +71,15 @@ func (s *Subscriber) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("get last cursor: %w", err)
 	}
+	if cur == 0 {
+		// We might as well try to get all the labels,
+		// hopefully they still serve them.
+		// TODO this could be improved: We could try cursor=1 and see what we
+		// get: If it actually starts at 1 (or 2?): good. If not, take whatever
+		// it returns and subtract some number, maybe 10k? Unclear how much
+		// buffering is going on...
+		cur = 1
+	}
 
 	d := websocket.DefaultDialer
 	u := s.labelerURI
