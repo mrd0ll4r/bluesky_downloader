@@ -262,6 +262,8 @@ func setupDB(dsn string) (*gorm.DB, error) {
 	return db, nil
 }
 
+var ErrMissingLabelerServiceEndpoint = errors.New("missing atproto_labeler service entry")
+
 func setupSubscriber(logger *slog.Logger, did syntax.DID, baseOutputDir string, pgDsn string, entriesPerFile int) (*Subscriber, error) {
 	db, err := setupDB(pgDsn)
 	if err != nil {
@@ -298,7 +300,7 @@ func setupSubscriber(logger *slog.Logger, did syntax.DID, baseOutputDir string, 
 	}
 	labelerEndpoint := ident.GetServiceEndpoint("atproto_labeler")
 	if labelerEndpoint == "" {
-		return nil, fmt.Errorf("missing atproto_labeler service entry")
+		return nil, ErrMissingLabelerServiceEndpoint
 	}
 	u, err := url.Parse(labelerEndpoint)
 	if err != nil {
@@ -361,7 +363,8 @@ func main() {
 	d, err := syntax.ParseDID(flag.Arg(0))
 	if err != nil {
 		logger.Error("unable to parse DID", "err", err)
-		os.Exit(1)
+		// IMPORTANT: Exit code 3 to signal systemd not to attempt a restart.
+		os.Exit(3)
 	}
 	logger = logger.With("labeler", d.String())
 	slog.SetDefault(logger)
@@ -369,6 +372,10 @@ func main() {
 	subscriber, err := setupSubscriber(logger, d, *outputDir, *postgresDsn, int(*numEntriesPerFile))
 	if err != nil {
 		logger.Error("unable to set up subscriber", "err", err)
+		if errors.Is(err, ErrMissingLabelerServiceEndpoint) {
+			// IMPORTANT: Exit code 3 to signal systemd not to attempt a restart.
+			os.Exit(3)
+		}
 		os.Exit(1)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
