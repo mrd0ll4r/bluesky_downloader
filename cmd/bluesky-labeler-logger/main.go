@@ -78,16 +78,16 @@ func (s *Subscriber) Run(ctx context.Context) error {
 		// get: If it actually starts at 1 (or 2?): good. If not, take whatever
 		// it returns and subtract some number, maybe 10k? Unclear how much
 		// buffering is going on...
-		cur = 1
+		s.logger.Info("have no cursor (or never received a label), will attempt to start at 1...")
 	}
 
 	d := websocket.DefaultDialer
 	u := s.labelerURI
 	u.Scheme = "wss"
 	u.Path = "/xrpc/com.atproto.label.subscribeLabels"
-	if cur != 0 {
-		u.RawQuery = fmt.Sprintf("cursor=%d", cur)
-	}
+	// We always provide the cursor. In particular, if it's zero, we should get
+	// all past labels.
+	u.RawQuery = fmt.Sprintf("cursor=%d", cur)
 	s.logger.Info("attempting to subscribe", "url", u.String())
 	con, _, err := d.Dial(u.String(), http.Header{
 		"User-Agent": []string{USER_AGENT},
