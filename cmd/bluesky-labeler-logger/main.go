@@ -357,13 +357,14 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: logLevel,
 	}))
-	slog.SetDefault(logger)
 
 	d, err := syntax.ParseDID(flag.Arg(0))
 	if err != nil {
 		logger.Error("unable to parse DID", "err", err)
 		os.Exit(1)
 	}
+	logger = logger.With("labeler", d.String())
+	slog.SetDefault(logger)
 
 	subscriber, err := setupSubscriber(logger, d, *outputDir, *postgresDsn, int(*numEntriesPerFile))
 	if err != nil {
