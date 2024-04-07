@@ -399,10 +399,12 @@ func main() {
 	fmt.Println("Press Ctrl-C to stop")
 
 	// Block until a signal is received or the subscriber dies.
+	errExit := false
 	select {
 	case <-c: // Ctrl-C, ok...
 	case err = <-subscriber.closed:
 		logger.Error("subscriber died, shutting down", "err", err)
+		errExit = true
 	}
 
 	fmt.Println("Shutting down...")
@@ -427,5 +429,9 @@ func main() {
 			logger.Error("subscriber did not shut down cleanly", "err", err)
 			os.Exit(1)
 		}
+	}
+
+	if errExit {
+		os.Exit(1)
 	}
 }
