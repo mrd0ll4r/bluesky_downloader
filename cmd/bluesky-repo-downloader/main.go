@@ -1,7 +1,7 @@
 package main
 
 import (
-	backfill2 "bluesky-downloader/backfill"
+	"bluesky-downloader/backfillmod"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -157,7 +157,7 @@ func setupDownloader(outputDir string, postgresDsn string, enableRepoDiscovery b
 	}
 
 	logger.Info("running database migrations")
-	err = db.AutoMigrate(&backfill2.GormDBJob{})
+	err = db.AutoMigrate(&backfillmod.GormDBJob{})
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +173,7 @@ func setupDownloader(outputDir string, postgresDsn string, enableRepoDiscovery b
 	}
 	bgsxrpc.UserAgent = &USER_AGENT
 
-	bfstore := backfill2.NewGormstore(db)
+	bfstore := backfillmod.NewGormstore(db)
 	opts := DefaultBackfillOptions()
 
 	// Adjust some rate limits.
@@ -210,7 +210,7 @@ type Server struct {
 	bgsxrpc *xrpc.Client
 	logger  *slog.Logger
 
-	bfs               *backfill2.Gormstore
+	bfs               *backfillmod.Gormstore
 	bf                *Backfiller
 	writer            *RepoWriter
 	stopRepoDiscovery chan struct{}
