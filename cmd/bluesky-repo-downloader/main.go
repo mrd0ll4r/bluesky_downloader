@@ -1,6 +1,7 @@
 package main
 
 import (
+	backfill2 "bluesky-downloader/backfill"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -13,7 +14,9 @@ import (
 	"github.com/bluesky-social/indigo/repo"
 	"github.com/bluesky-social/indigo/xrpc"
 	"github.com/ipfs/go-cid"
+	"github.com/ipld/go-car/v2"
 	"github.com/labstack/gommon/log"
+	flag "github.com/spf13/pflag"
 	typegen "github.com/whyrusleeping/cbor-gen"
 	"go.opentelemetry.io/otel"
 	"golang.org/x/sync/semaphore"
@@ -29,20 +32,61 @@ import (
 )
 
 var (
-	USER_AGENT         = "github.com/mrd0ll4r/bluesky_downloader/repo_downloader"
-	ENV_REPO_DISCOVERY = "ENABLE_REPO_DISCOVERY"
-	OUTPUT_DIR         = "repos"
-	POSTGRES_DSN       = "postgres://bluesky_indexer:bluesky_indexer@localhost:5434/bluesky_indexer"
+	USER_AGENT            = "github.com/mrd0ll4r/bluesky_downloader/repo_downloader"
+	DEFAULT_OUTPUT_DIR    = "repos"
+	DEFAULT_POSTGRES_DSN  = "postgres://bluesky_indexer:bluesky_indexer@localhost:5434/bluesky_indexer"
+	REPO_PLC_SUBDIR_DEPTH = 4
 )
 
 func main() {
-	server, err := doStuff()
+	var outputDir = flag.String("outdir", DEFAULT_OUTPUT_DIR, "Path to the base output directory")
+	var postgresDsn = flag.String("db", DEFAULT_POSTGRES_DSN, "DSN to connect to a postgres database")
+	var debug = flag.Bool("debug", false, "Whether to enable debug logging")
+	var enableRepoDiscovery = flag.Bool("repoDiscovery", false, "Whether to enable repo discovery")
+
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "%s [flags]\n", os.Args[0])
+		fmt.Fprintln(os.Stderr, "Flags:")
+		flag.PrintDefaults()
+	}
+
+	flag.Parse()
+
+	if len(*outputDir) == 0 || len(*postgresDsn) == 0 {
+		flag.Usage()
+		os.Exit(2)
+	}
+
+	logLevel := slog.LevelInfo
+	if *debug {
+		logLevel = slog.LevelDebug
+	}
+
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: logLevel,
+	}))
+	slog.SetDefault(logger)
+
+	downloader, err := setupDownloader(*outputDir, *postgresDsn, *enableRepoDiscovery, logger)
 	if err != nil {
 		panic(err)
 	}
 
+	/*
+		// Add our repo to the list of jobs
+		j, err := downloader.bfs.GetOrCreateJob(context.Background(), "did:plc:nggqjgdkqhytcag6x7fhiyuv", StateEnqueued)
+		if err != nil {
+			panic(err)
+		}
+		err = j.SetState(context.Background(), StateEnqueued)
+		if err != nil {
+			panic(err)
+		}
+	*/
+
 	go func() {
-		err := server.Run(context.Background())
+		err := downloader.Run(context.Background())
 		if err != nil {
 			panic(err)
 		}
@@ -56,13 +100,16 @@ func main() {
 
 	fmt.Println("Press Ctrl-C to stop")
 
-	// Block until a signal is received.
-	<-c
+	// Block until a signal is received or all work is done.
+	select {
+	case <-c:
+	case <-downloader.processingDone:
+	}
 
 	fmt.Println("Shutting down...")
 	r := make(chan error)
 	go func() {
-		err = server.Stop(context.Background())
+		err = downloader.Stop(context.Background())
 		if err != nil {
 			r <- err
 		}
@@ -81,8 +128,8 @@ func main() {
 	}
 }
 
-func setupDB() (*gorm.DB, error) {
-	db, err := gorm.Open(postgres.Open(POSTGRES_DSN), &gorm.Config{
+func setupDB(dsn string) (*gorm.DB, error) {
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		SkipDefaultTransaction: true,
 		TranslateError:         true,
 	})
@@ -102,42 +149,31 @@ func setupDB() (*gorm.DB, error) {
 	return db, nil
 }
 
-func doStuff() (*Server, error) {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-	slog.SetDefault(logger)
-
-	db, err := setupDB()
+func setupDownloader(outputDir string, postgresDsn string, enableRepoDiscovery bool, logger *slog.Logger) (*Server, error) {
+	logger = logger.With("component", "downloader")
+	db, err := setupDB(postgresDsn)
 	if err != nil {
 		return nil, err
 	}
 
 	logger.Info("running database migrations")
-	err = db.AutoMigrate(&backfill.GormDBJob{})
+	err = db.AutoMigrate(&backfill2.GormDBJob{})
 	if err != nil {
 		return nil, err
 	}
 
-	writer, err := NewRepoWriter(OUTPUT_DIR, 4, logger, 4)
+	writer, err := NewRepoWriter(logger, outputDir, 4)
 	if err != nil {
 		return nil, fmt.Errorf("unable to set up repo writer: %w", err)
 	}
 
-	bgsws := "wss://bsky.network"
-	if !strings.HasPrefix(bgsws, "ws") {
-		return nil, fmt.Errorf("specified bgs host must include 'ws://' or 'wss://'")
-	}
-
-	bgshttp := strings.Replace(bgsws, "ws", "http", 1)
+	bgshttp := "https://bsky.network"
 	bgsxrpc := &xrpc.Client{
 		Host: bgshttp,
 	}
 	bgsxrpc.UserAgent = &USER_AGENT
 
-	_, enableRepoDiscovery := os.LookupEnv(ENV_REPO_DISCOVERY)
-
-	bfstore := backfill.NewGormstore(db)
+	bfstore := backfill2.NewGormstore(db)
 	opts := DefaultBackfillOptions()
 
 	// Adjust some rate limits.
@@ -162,7 +198,9 @@ func doStuff() (*Server, error) {
 		bf:                  bf,
 		writer:              writer,
 		enableRepoDiscovery: enableRepoDiscovery,
-		stop:                make(chan struct{}),
+		stopRepoDiscovery:   make(chan struct{}),
+		processingDone:      make(chan struct{}),
+		repoDiscoveryDone:   make(chan struct{}),
 	}
 
 	return s, nil
@@ -172,17 +210,21 @@ type Server struct {
 	bgsxrpc *xrpc.Client
 	logger  *slog.Logger
 
-	bfs    *backfill.Gormstore
-	bf     *Backfiller
-	writer *RepoWriter
-	stop   chan struct{}
+	bfs               *backfill2.Gormstore
+	bf                *Backfiller
+	writer            *RepoWriter
+	stopRepoDiscovery chan struct{}
+	processingDone    chan struct{}
 
 	enableRepoDiscovery bool
+	repoDiscoveryDone   chan struct{}
 }
 
 func (s *Server) Stop(ctx context.Context) error {
 	s.logger.Info("stopping repo discovery")
-	s.stop <- struct{}{}
+	if s.enableRepoDiscovery {
+		s.stopRepoDiscovery <- struct{}{}
+	}
 
 	err := s.bf.Stop(ctx)
 	if err != nil {
@@ -208,61 +250,67 @@ func (s *Server) Run(ctx context.Context) error {
 		go s.discoverRepos()
 	} else {
 		s.logger.Warn("repo discovery turned OFF. Only processing already-known jobs")
+		close(s.repoDiscoveryDone)
 	}
 
 	go s.writer.Run(ctx)
 
-	go s.bf.Run()
+	go s.bf.Run(s.repoDiscoveryDone, s.processingDone)
 
 	return nil
 }
 
 func (s *Server) discoverRepos() {
 	ctx := context.Background()
-	log := s.logger.With("func", "discoverRepos")
-	log.Info("starting repo discovery")
+	logger := s.logger.With("func", "discoverRepos")
+	logger.Info("starting repo discovery")
 
 	cursor := ""
-	limit := int64(500)
+	limit := int64(1000)
 
 	total := 0
 	totalErrored := 0
 
 	for {
 		select {
-		case <-s.stop:
-			s.logger.Info("quitting repo discovery")
+		case <-s.stopRepoDiscovery:
+			logger.Info("quitting repo discovery")
 			return
 		default:
 		}
 		resp, err := atproto.SyncListRepos(ctx, s.bgsxrpc, cursor, limit)
 		if err != nil {
-			log.Error("failed to list repos", "err", err)
+			logger.Error("failed to list repos", "err", err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
-		log.Info("got repo page", "count", len(resp.Repos), "cursor", resp.Cursor)
+		logger.Info("got repo page", "count", len(resp.Repos), "cursor", resp.Cursor)
 		errored := 0
 		for _, r := range resp.Repos {
 			// Create a job if not already present.
-			_, err := s.bfs.GetOrCreateJob(ctx, r.Did, StateEnqueued)
+			j, err := s.bfs.GetOrCreateJob(ctx, r.Did, StateEnqueued)
 			if err != nil {
-				log.Error("failed to get or create job", "did", r.Did, "err", err)
+				logger.Error("failed to get or create job", "did", r.Did, "err", err)
 				errored++
 				continue
 			}
 
-			// TODO this was not in the original, but we could do this to force
-			// repos to be re-downloaded on every run.
-			/*
+			logger.Debug("got repo", "repo", r)
+
+			// Important: We actually store the head as rev, because the API does not return a rev
+			if j.Rev() != r.Head {
+				// Enqueue
+				logger.Debug("enqueueing job due to revision mismatch", "did", r.Did, "job.rev", j.Rev(), "repo.head", r.Head)
 				err = j.SetState(ctx, StateEnqueued)
 				if err != nil {
-					log.Error("failed to get or create job", "did", r.Did, "err", err)
+					logger.Error("failed to enqueue job", "did", r.Did, "err", err)
 					errored++
 				}
-			*/
+			} else {
+				logger.Debug("not force-enqueueing job because revision is unchanged", "did", r.Did, "job.rev", j.Rev(), "repo.head", r.Head)
+			}
 		}
-		log.Info("enqueued repos", "total", len(resp.Repos), "errored", errored)
+		logger.Info("created/updated jobs", "total", len(resp.Repos), "errored", errored)
 		totalErrored += errored
 		total += len(resp.Repos)
 		if resp.Cursor != nil && *resp.Cursor != "" {
@@ -272,31 +320,33 @@ func (s *Server) discoverRepos() {
 		}
 	}
 
-	log.Info("finished repo discovery", "totalJobs", total, "totalErrored", totalErrored)
+	logger.Info("finished repo discovery", "totalJobs", total, "totalErrored", totalErrored)
+	close(s.repoDiscoveryDone)
+	// We still need to wait for this, otherwise exiting hangs.
+	// TODO maybe fix.
+	<-s.stopRepoDiscovery
 }
 
 type RepoWriter struct {
-	baseDir        string
-	didSplitLength int
-	reposIn        chan repoWriterJob
-	logger         *slog.Logger
+	reposIn chan repoWriterJob
+	logger  *slog.Logger
 
+	outputDir      string
 	parallelWrites int
 
 	stop chan chan struct{}
 }
 
-func NewRepoWriter(baseDir string, didSplitLength int, logger *slog.Logger, parallelWrites int) (*RepoWriter, error) {
-	err := os.MkdirAll(baseDir, 0777)
+func NewRepoWriter(logger *slog.Logger, outputDir string, parallelWrites int) (*RepoWriter, error) {
+	err := os.MkdirAll(outputDir, 0777)
 	if err != nil {
 		return nil, fmt.Errorf("unable to mkdir: %w", err)
 	}
 
 	w := &RepoWriter{
-		baseDir:        baseDir,
-		didSplitLength: didSplitLength,
 		reposIn:        make(chan repoWriterJob),
 		logger:         logger,
+		outputDir:      outputDir,
 		parallelWrites: parallelWrites,
 		stop:           make(chan chan struct{}, 1),
 	}
@@ -351,22 +401,34 @@ func (w *RepoWriter) Run(ctx context.Context) {
 	}
 }
 
-func (w *RepoWriter) calculatePathAndOpenFile(did string, rev string) (*os.File, *os.File, error) {
+func calculateRepoDirPath(baseDir string, subdirDepth int, did string) (string, error) {
 	parsedDid, err := did2.ParseDID(did)
 	if err != nil {
-		return nil, nil, fmt.Errorf("invalid DID: %w", err)
+		return "", fmt.Errorf("invalid DID: %w", err)
 	}
 
 	// Split DID into parts to not create a few million directory entries...
 	repoDir := ""
-	if len(parsedDid.Value()) > w.didSplitLength {
-		split1 := parsedDid.Value()[:w.didSplitLength]
-		split2 := parsedDid.Value()[w.didSplitLength:]
-
-		repoDir = path.Join(w.baseDir, "did", parsedDid.Protocol(), split1, split2, "repo_revisions")
+	if parsedDid.Protocol() != "plc" {
+		// We only split plc DIDs
+		repoDir = path.Join(baseDir, "did", parsedDid.Protocol(), parsedDid.Value(), "repo_revisions")
 	} else {
-		repoDir = path.Join(w.baseDir, "did", parsedDid.Protocol(), parsedDid.Value(), "repo_revisions")
+		numPartsLeft := subdirDepth
+		valueLeft := parsedDid.Value()
+		baseDir := path.Join(baseDir, "did", parsedDid.Protocol())
+		for len(valueLeft) > 1 && numPartsLeft > 0 {
+			numPartsLeft--
+			baseDir = path.Join(baseDir, valueLeft[:1])
+			valueLeft = valueLeft[1:]
+		}
+		repoDir = path.Join(baseDir, parsedDid.Value(), "repo_revisions")
 	}
+
+	return repoDir, nil
+}
+
+func (w *RepoWriter) calculatePathAndOpenFile(did string, rev string) (*os.File, *os.File, error) {
+	repoDir, err := calculateRepoDirPath(w.outputDir, REPO_PLC_SUBDIR_DEPTH, did)
 
 	err = os.MkdirAll(repoDir, 0777)
 	if err != nil {
@@ -399,6 +461,7 @@ type JsonRepoEntry struct {
 type JsonRepoRevision struct {
 	Did      string          `json:"did"`
 	Revision string          `json:"revision"`
+	Head     string          `json:"head"`
 	Entries  []JsonRepoEntry `json:"entries"`
 }
 
@@ -429,6 +492,7 @@ func (w *RepoWriter) doWork(rev *repoRevision) error {
 
 	prettyRevision := JsonRepoRevision{
 		Revision: rev.rev,
+		Head:     rev.head,
 		Did:      rev.did,
 	}
 
@@ -569,7 +633,7 @@ func NewBackfiller(
 }
 
 // Run starts the backfill processor routine
-func (b *Backfiller) Run() {
+func (b *Backfiller) Run(jobProducerDone chan struct{}, processingDone chan struct{}) {
 	ctx := context.Background()
 
 	log := slog.With("source", "backfiller", "name", b.Name)
@@ -580,11 +644,22 @@ func (b *Backfiller) Run() {
 	for {
 		select {
 		case stopped := <-b.stop:
-			log.Info("stopping backfill processor")
+			log.Info("backfill processor shutting down")
 			sem.Acquire(ctx, int64(b.ParallelBackfills))
 			close(stopped)
 			return
 		default:
+		}
+
+		// Are we still producing jobs?
+		// The ordering here is important: we need to check this _before_ asking
+		// the DB for jobs, to avoid a race condition.
+		producing := false
+		select {
+		case <-jobProducerDone:
+		// not producing
+		default:
+			producing = true
 		}
 
 		// Get the next job
@@ -594,6 +669,11 @@ func (b *Backfiller) Run() {
 			time.Sleep(1 * time.Second)
 			continue
 		} else if job == nil {
+			// No processable jobs in the database -- are will still producing new ones?
+			if !producing {
+				log.Info("no more jobs are being produced, and no jobs to process, marking processing done")
+				close(processingDone)
+			}
 			time.Sleep(1 * time.Second)
 			continue
 		}
@@ -662,11 +742,23 @@ func (b *Backfiller) BackfillRepo(ctx context.Context, job backfill.Job) (string
 
 	b.syncLimiter.Wait(ctx)
 
-	resp, err := atproto.SyncGetRepo(ctx, b.bgsxrpc, repoDid, job.Rev())
+	//resp, err := atproto.SyncGetRepo(ctx, b.bgsxrpc, repoDid, job.Rev())
+	// TODO we explicitly ignore the previous revision and alway download the full repo at the latest revision.
+	// We do this because a) We only enqueue jobs for which our revision is not the latest one (or we don't have any revision), and
+	// b) we want to investigate how repos are served by bluesky, not how we could construct the latest version from diffs.
+	resp, err := atproto.SyncGetRepo(ctx, b.bgsxrpc, repoDid, "")
 	if err != nil {
 		state := fmt.Sprintf("failed (do request: %s)", err.Error())
 		return state, fmt.Errorf("failed to send request: %w", err)
 	}
+
+	br, err := car.NewBlockReader(bytes.NewReader(resp))
+	if err != nil {
+		state := "failed (couldn't read repo CAR from response body)"
+		return state, fmt.Errorf("failed to read repo from car: %w", err)
+	}
+
+	commitCid := br.Roots[0]
 
 	r, err := repo.ReadRepoFromCar(ctx, bytes.NewReader(resp))
 	if err != nil {
@@ -674,13 +766,22 @@ func (b *Backfiller) BackfillRepo(ctx context.Context, job backfill.Job) (string
 		return state, fmt.Errorf("failed to read repo from car: %w", err)
 	}
 
-	// TODO if we supplied a revision to create a diff from, this will not be
-	// a complete repo, but just a diff, maybe?
+	/*
+		// TODO if we supplied a revision to create a diff from, this will not be
+		// a complete repo, but just a diff, maybe?
+		if len(job.Rev()) != 0 {
+			err = augmentRepoWithPreviousVersion(ctx,r, job.Rev())
+			if err != nil {
+				return fmt.Sprintf("failed (augment repo: %s)", err.Error()), fmt.Errorf("unable to augment repo diff with previous repo version: %w", err)
+			}
+		}
+	*/
 
 	numRecords := 0
 	rev := r.SignedCommit().Rev
 	repoRev := repoRevision{
 		rev:    rev,
+		head:   commitCid.String(),
 		rawCar: resp,
 		did:    repoDid,
 	}
@@ -716,7 +817,7 @@ func (b *Backfiller) BackfillRepo(ctx context.Context, job backfill.Job) (string
 		return state, fmt.Errorf("failed to write to disk: %w", err)
 	}
 
-	if err := job.SetRev(ctx, r.SignedCommit().Rev); err != nil {
+	if err := job.SetRev(ctx, commitCid.String()); err != nil {
 		state := fmt.Sprintf("failed (set rev: %s)", err.Error())
 		return state, fmt.Errorf("failed to set job rev: %w", err)
 	}
@@ -729,6 +830,59 @@ func (b *Backfiller) BackfillRepo(ctx context.Context, job backfill.Job) (string
 	return StateComplete, nil
 }
 
+func augmentRepoWithPreviousVersion(ctx context.Context, baseDir string, r *repo.Repo, prev string) error {
+	// Read previous version into blockstore
+	repoDir, err := calculateRepoDirPath(baseDir, REPO_PLC_SUBDIR_DEPTH, r.RepoDid())
+	if err != nil {
+		return fmt.Errorf("unable to calculate repo dir: %w", err)
+	}
+
+	previousRepoCarPath := path.Join(repoDir, fmt.Sprintf("%s.car.gz", prev))
+	previousRepoCarFile, err := os.Open(previousRepoCarPath)
+	if err != nil {
+		return fmt.Errorf("unable to open previous repo CAR file: %w", err)
+	}
+	defer previousRepoCarFile.Close()
+
+	reader, err := gzip.NewReader(previousRepoCarFile)
+	if err != nil {
+		return fmt.Errorf("unable to open gzip reader: %w", err)
+	}
+	defer reader.Close()
+
+	oldRepo, err := repo.ReadRepoFromCar(ctx, reader)
+	if err != nil {
+		return fmt.Errorf("unable to read previous repo: %w", err)
+	}
+
+	// Add to blockstore of current repo
+	oldBs := oldRepo.Blockstore()
+	keys, err := oldBs.AllKeysChan(ctx)
+	if err != nil {
+		return fmt.Errorf("unable to iterate blocks of previous repo: %w", err)
+	}
+
+	bs := r.Blockstore()
+	for key := range keys {
+		has, err := bs.Has(ctx, key)
+		if err != nil {
+			return fmt.Errorf("unable to check block presence in blockstore: %w", err)
+		}
+		if !has {
+			block, err := oldBs.Get(ctx, key)
+			if err != nil {
+				return fmt.Errorf("unable to get block for CID %s from old blockstore: %w", key, err)
+			}
+			err = bs.Put(ctx, block)
+			if err != nil {
+				return fmt.Errorf("unable to put block into new repo blockstore: %w", err)
+			}
+		}
+	}
+
+	return nil
+}
+
 type repoEntry struct {
 	path     string
 	rawBlock []byte
@@ -738,6 +892,7 @@ type repoEntry struct {
 type repoRevision struct {
 	did     string
 	rev     string
+	head    string
 	rawCar  []byte
 	entries []repoEntry
 }

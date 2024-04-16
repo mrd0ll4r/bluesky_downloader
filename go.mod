@@ -1,22 +1,27 @@
 module bluesky-downloader
 
-go 1.21
+go 1.22
+
+toolchain go1.22.0
 
 require (
-	github.com/bluesky-social/indigo v0.0.0-20240323010211-65fc18540442
+	github.com/bluesky-social/indigo v0.0.0-20240416045721-c8a4623cc738
 	github.com/carlmjohnson/versioninfo v0.22.5
 	github.com/gorilla/websocket v1.5.1
 	github.com/ipfs/go-cid v0.4.1
 	github.com/ipld/go-car/v2 v2.13.1
 	github.com/labstack/gommon v0.4.1
 	github.com/polydawn/refmt v0.89.1-0.20221221234430-40501e09de1f
+	github.com/spf13/pflag v1.0.5
 	github.com/whyrusleeping/cbor-gen v0.1.1-0.20240311221002-68b9f235c302
 	go.opentelemetry.io/otel v1.21.0
 	golang.org/x/sync v0.5.0
 	golang.org/x/time v0.3.0
-	gorm.io/driver/postgres v1.5.0
-	gorm.io/gorm v1.25.5
+	gorm.io/driver/postgres v1.5.7
+	gorm.io/gorm v1.25.9
 )
+
+replace github.com/bluesky-social/indigo v0.0.0-20240416045721-c8a4623cc738 => github.com/mrd0ll4r/indigo v0.0.0-20240416095748-efd3ad71449a
 
 require (
 	github.com/RussellLuo/slidingwindow v0.0.0-20200528002341-535bb99d338b // indirect
@@ -87,7 +92,6 @@ require (
 	github.com/prometheus/procfs v0.12.0 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
-	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/whyrusleeping/cbor v0.0.0-20171005072247-63513f603b11 // indirect
