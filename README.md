@@ -10,6 +10,10 @@ This is currently done via docker compose, see [docker-compose.yml](docker-compo
 
 Building the binaries can be done via `./build.sh`.
 
+The systemd services files are intended to be installed per user.
+Copy the files to ` ~/.config/systemd/user/` and run `systemctl --user daemon-reload`.
+
+
 ## Usage
 
 ### `bluesky-labeler-logger`
