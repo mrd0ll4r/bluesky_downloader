@@ -1,0 +1,20 @@
+[Unit]
+Description=Bluesky Labeler Logger for %I
+#After=network-online.target nss-lookup.target
+#Wants=network-online.target nss-lookup.target
+PartOf=bluesky-labeler-logger.target
+StartLimitIntervalSec=3600
+StartLimitBurst=4
+
+[Service]
+Type=exec
+ExecStart=/home/leo/projects/bluesky/bluesky_downloader --db 'postgres://bluesky_indexer:bluesky_indexer@localhost:5434/bluesky_indexer' %i
+KillSignal=SIGINT
+WorkingDirectory=/home/leo/projects/bluesky/bluesky_downloader
+RestartSec=10
+Restart=on-failure
+# Exit code 2 is invalid cmdline, 3 are non-temporary errors
+RestartPreventExitStatus=2 3
+
+[Install]
+WantedBy=default.target
