@@ -61,7 +61,7 @@ func (s *Subscriber) updateLastCursor(curs int64) error {
 	return s.db.Model(LastSeq{}).Where("id = 1").Update("seq", curs).Error
 }
 
-func (s *Subscriber) Run(ctx context.Context) error {
+func (s *Subscriber) Run(ctx context.Context, livenessChan chan struct{}) error {
 	defer func() { close(s.closed) }()
 	cur, err := s.getLastCursor()
 	if err != nil {
@@ -92,11 +92,14 @@ func (s *Subscriber) Run(ctx context.Context) error {
 		RepoCommit: func(evt *atproto.SyncSubscribeRepos_Commit) error {
 			defer func() {
 				if evt.Seq%50 == 0 {
+					livenessChan <- struct{}{}
+
 					if err := s.updateLastCursor(evt.Seq); err != nil {
 						s.logger.Error("failed to persist cursor", "err", err)
 					}
 				}
 			}()
+
 			cur = evt.Seq
 			logEvt := s.logger.With("repo", evt.Repo, "rev", evt.Rev, "seq", evt.Seq)
 			logEvt.Debug("REPO_COMMIT", "ops", evt.Ops)
@@ -117,11 +120,14 @@ func (s *Subscriber) Run(ctx context.Context) error {
 		RepoHandle: func(evt *atproto.SyncSubscribeRepos_Handle) error {
 			defer func() {
 				if evt.Seq%50 == 0 {
+					livenessChan <- struct{}{}
+
 					if err := s.updateLastCursor(evt.Seq); err != nil {
 						s.logger.Error("failed to persist cursor", "err", err)
 					}
 				}
 			}()
+
 			cur = evt.Seq
 			logEvt := s.logger.With("did", evt.Did, "seq", evt.Seq)
 			logEvt.Debug("REPO_HANDLE", "handle", evt.Handle)
@@ -137,11 +143,14 @@ func (s *Subscriber) Run(ctx context.Context) error {
 		RepoIdentity: func(evt *atproto.SyncSubscribeRepos_Identity) error {
 			defer func() {
 				if evt.Seq%50 == 0 {
+					livenessChan <- struct{}{}
+
 					if err := s.updateLastCursor(evt.Seq); err != nil {
 						s.logger.Error("failed to persist cursor", "err", err)
 					}
 				}
 			}()
+
 			cur = evt.Seq
 			logEvt := s.logger.With("did", evt.Did, "seq", evt.Seq)
 			logEvt.Debug("REPO_IDENTITY")
@@ -171,11 +180,14 @@ func (s *Subscriber) Run(ctx context.Context) error {
 		RepoMigrate: func(evt *atproto.SyncSubscribeRepos_Migrate) error {
 			defer func() {
 				if evt.Seq%50 == 0 {
+					livenessChan <- struct{}{}
+
 					if err := s.updateLastCursor(evt.Seq); err != nil {
 						s.logger.Error("failed to persist cursor", "err", err)
 					}
 				}
 			}()
+
 			cur = evt.Seq
 			logEvt := s.logger.With("did", evt.Did, "seq", evt.Seq)
 			logEvt.Debug("REPO_MIGRATE", "migrate_to", evt.MigrateTo)
@@ -191,11 +203,14 @@ func (s *Subscriber) Run(ctx context.Context) error {
 		RepoTombstone: func(evt *atproto.SyncSubscribeRepos_Tombstone) error {
 			defer func() {
 				if evt.Seq%50 == 0 {
+					livenessChan <- struct{}{}
+
 					if err := s.updateLastCursor(evt.Seq); err != nil {
 						s.logger.Error("failed to persist cursor", "err", err)
 					}
 				}
 			}()
+
 			cur = evt.Seq
 			logEvt := s.logger.With("did", evt.Did, "seq", evt.Seq)
 			logEvt.Debug("REPO_TOMBSTONE")
@@ -211,11 +226,14 @@ func (s *Subscriber) Run(ctx context.Context) error {
 		LabelLabels: func(evt *atproto.LabelSubscribeLabels_Labels) error {
 			defer func() {
 				if evt.Seq%50 == 0 {
+					livenessChan <- struct{}{}
+
 					if err := s.updateLastCursor(evt.Seq); err != nil {
 						s.logger.Error("failed to persist cursor", "err", err)
 					}
 				}
 			}()
+
 			cur = evt.Seq
 			logEvt := s.logger.With("seq", evt.Seq)
 			logEvt.Debug("LABEL_LABELS", "labels", evt.Labels)
@@ -377,9 +395,31 @@ func main() {
 		os.Exit(1)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	livenessChan := make(chan struct{})
+	deadShutdownChan := make(chan struct{})
+	go func() {
+		livenessTimeout := 5 * time.Minute
+		t := time.NewTicker(livenessTimeout)
+		for {
+			select {
+			case <-livenessChan:
+				// We got something, reset the ticker
+				t.Reset(livenessTimeout)
+			case <-t.C:
+				// Timer expired, shut down
+				logger.Error("liveness check failed")
+				close(deadShutdownChan)
+				// Maybe drain this to be nice?
+				for range livenessChan {
+				}
+				return
+			}
+
+		}
+	}()
 
 	go func() {
-		err := subscriber.Run(ctx)
+		err := subscriber.Run(ctx, livenessChan)
 		if err != nil {
 			// This only returns an error if we were unable to subscribe.
 			// Later errors are passed via subscriber.closed, and handled.
@@ -399,6 +439,8 @@ func main() {
 	// Block until a signal is received or the subscriber dies.
 	select {
 	case <-c: // Ctrl-C, ok...
+	case <-deadShutdownChan:
+		log.Error("liveness check failed, shutting down...")
 	case err = <-subscriber.closed:
 		log.Error("subscriber died, shutting down", "err", err)
 	}
@@ -426,4 +468,7 @@ func main() {
 			os.Exit(1)
 		}
 	}
+
+	// Close this for cleanup, why not.
+	close(livenessChan)
 }
