@@ -5,7 +5,7 @@ go 1.22
 toolchain go1.22.0
 
 require (
-	github.com/bluesky-social/indigo v0.0.0-20240416045721-c8a4623cc738
+	github.com/bluesky-social/indigo v0.0.0-20241008040750-06bacb465af7
 	github.com/carlmjohnson/versioninfo v0.22.5
 	github.com/gorilla/websocket v1.5.1
 	github.com/ipfs/go-cid v0.4.1
@@ -13,15 +13,13 @@ require (
 	github.com/labstack/gommon v0.4.1
 	github.com/polydawn/refmt v0.89.1-0.20221221234430-40501e09de1f
 	github.com/spf13/pflag v1.0.5
-	github.com/whyrusleeping/cbor-gen v0.1.1-0.20240311221002-68b9f235c302
+	github.com/whyrusleeping/cbor-gen v0.1.3-0.20240904181319-8dc02b38228c
 	go.opentelemetry.io/otel v1.21.0
 	golang.org/x/sync v0.5.0
 	golang.org/x/time v0.3.0
 	gorm.io/driver/postgres v1.5.7
 	gorm.io/gorm v1.25.9
 )
-
-replace github.com/bluesky-social/indigo v0.0.0-20240416045721-c8a4623cc738 => github.com/mrd0ll4r/indigo v0.0.0-20240416095748-efd3ad71449a
 
 require (
 	github.com/RussellLuo/slidingwindow v0.0.0-20200528002341-535bb99d338b // indirect
@@ -107,7 +105,7 @@ require (
 	golang.org/x/crypto v0.21.0 // indirect
 	golang.org/x/exp v0.0.0-20231110203233-9a3e6036ecaa // indirect
 	golang.org/x/net v0.21.0 // indirect
-	golang.org/x/sys v0.18.0 // indirect
+	golang.org/x/sys v0.22.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
 	google.golang.org/protobuf v1.31.0 // indirect
