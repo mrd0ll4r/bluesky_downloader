@@ -22,6 +22,7 @@ type JsonEvent struct {
 	RepoCommit    *atproto.SyncSubscribeRepos_Commit    `json:"repo_commit"`
 	RepoHandle    *atproto.SyncSubscribeRepos_Handle    `json:"repo_handle"`
 	RepoIdentity  *atproto.SyncSubscribeRepos_Identity  `json:"repo_identity"`
+	RepoAccount   *atproto.SyncSubscribeRepos_Account   `json:"repo_account"`
 	RepoInfo      *atproto.SyncSubscribeRepos_Info      `json:"repo_info"`
 	RepoMigrate   *atproto.SyncSubscribeRepos_Migrate   `json:"repo_migrate"`
 	RepoTombstone *atproto.SyncSubscribeRepos_Tombstone `json:"repo_tombstone"`

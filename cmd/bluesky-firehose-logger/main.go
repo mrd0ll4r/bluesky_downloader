@@ -163,6 +163,29 @@ func (s *Subscriber) Run(ctx context.Context, livenessChan chan struct{}) error 
 
 			return nil
 		},
+		RepoAccount: func(evt *atproto.SyncSubscribeRepos_Account) error {
+			defer func() {
+				if evt.Seq%50 == 0 {
+					livenessChan <- struct{}{}
+
+					if err := s.updateLastCursor(evt.Seq); err != nil {
+						s.logger.Error("failed to persist cursor", "err", err)
+					}
+				}
+			}()
+
+			cur = evt.Seq
+			logEvt := s.logger.With("did", evt.Did, "seq", evt.Seq)
+			logEvt.Debug("REPO_ACCOUNT", "active", evt.Active, "status", evt.Status, "time", evt.Time)
+
+			jsonEvent := event.JsonEvent{
+				Received:    time.Now(),
+				RepoAccount: evt,
+			}
+			s.writer.WriteEvent(jsonEvent)
+
+			return nil
+		},
 		RepoInfo: func(evt *atproto.SyncSubscribeRepos_Info) error {
 			// TODO this does not have a sequence number, why?
 
