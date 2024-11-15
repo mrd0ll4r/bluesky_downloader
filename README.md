@@ -2,17 +2,41 @@
 
 Tools to Download and save data from the Bluesky Network.
 
+These were used for data collection for the paper **Looking AT the Blue Skies of Bluesky**,
+which was presented at **IMC'24** ([link](https://dl.acm.org/doi/10.1145/3646547.3688407), [arXiv](https://arxiv.org/abs/2408.12449)).
+If you use these tools for academic work, please cite our publication:
+```
+@inproceedings{10.1145/3646547.3688407,
+author = {Balduf, Leonhard and Sokoto, Saidu and Ascigil, Onur and Tyson, Gareth and Scheuermann, Bj\"{o}rn and Korczy\'{n}ski, Maciej and Castro, Ignacio and Kr\'{o}l, Michaundefined},
+title = {Looking AT the Blue Skies of Bluesky},
+year = {2024},
+isbn = {9798400705922},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3646547.3688407},
+doi = {10.1145/3646547.3688407},
+abstract = {The pitfalls of centralized social networks, such as Facebook and Twitter/X, have led to concerns about control, transparency, and accountability. Decentralized social networks have emerged as a result with the goal of empowering users. These decentralized approaches come with their own trade-offs, and therefore multiple architectures exist. In this paper, we conduct the first large-scale analysis of Bluesky, a prominent decentralized microblogging platform. In contrast to alternative approaches (e.g. Mastodon), Bluesky decomposes and opens the key functions of the platform into subcomponents that can be provided by third party stakeholders. We collect a comprehensive dataset covering all the key elements of Bluesky, study user activity and assess the diversity of providers for each sub-components.},
+booktitle = {Proceedings of the 2024 ACM on Internet Measurement Conference},
+pages = {76–91},
+numpages = {16},
+keywords = {bluesky, decentralized social networks, social network analysis},
+location = {Madrid, Spain},
+series = {IMC '24}
+}
+```
+
 ## Installation/Building
 
-Needs a recent version of Go to run.
+This needs a recent version of Go to run.
 Some things need a Postgres database to be accessible on `localhost:5434`.
 This is currently done via docker compose, see [docker-compose.yml](docker-compose.yml).
 
 Building the binaries can be done via `./build.sh`.
 
-The systemd services files are intended to be installed per user.
+The `dist/` directory contains a few useful scripts and systemd service files.
+The systemd services files for labeler loggers are intended to be installed per user.
 Copy the files to ` ~/.config/systemd/user/` and run `systemctl --user daemon-reload`.
-
+After starting the services, you can list them with `systemctl --user list-units --type=service`.
 
 ## Usage
 
@@ -35,8 +59,10 @@ Quit with `Ctrl-C`.
 
 It needs a Postgres database running somewhere, see [init_db.sh](init_db.sh) for initial setup to use the default configuration.
 This can be achieved by running `docker compose up`.
+The database stores the latest cursor per labeler DID.
 
-The tool connects to the firehose and logs all received messages to disk with a timestamp attached to them.
+The tool connects to the labeler endpoint as specified in the DID document of the given account
+and logs all received messages to disk with a timestamp attached to them.
 The files are saved to `outdir`, with subdirectories per DID.
 Each log file is named after the Unix timestamp at which it was created.
 Every `entries-per-file` entries, the log file is rotated and compressed.
