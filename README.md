@@ -112,6 +112,10 @@ In case of a crash, at most 50 events could be duplicated at the end of the old 
 This goes and downloads all current repos for all known DIDs to disk.
 It uses a database to keep track of which revisions (actually which commit CID) we have for a given repo, to avoid re-downloading unchanged repos.
 
+**Note:** This used to work fine in April 2024 when we wrote the paper.
+Currently, it probably can't keep up with changes.
+Also, the format produces millions of directories with a few files in them each, which is not great.
+
 Basic usage:
 ```
 ./bluesky-repo-downloader [flags]
