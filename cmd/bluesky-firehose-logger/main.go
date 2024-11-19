@@ -34,7 +34,7 @@ type Subscriber struct {
 	db                   *gorm.DB
 	bgsUrl               url.URL
 	logger               *slog.Logger
-	writer               *event.Writer
+	writer               *event.RotatingWriter
 	saveRepoCommitBlocks bool
 	closed               chan error
 }

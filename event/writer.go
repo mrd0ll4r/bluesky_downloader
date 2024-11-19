@@ -4,7 +4,6 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
-	"github.com/bluesky-social/indigo/api/atproto"
 	"io"
 	"log/slog"
 	"os"
@@ -12,28 +11,12 @@ import (
 	"time"
 )
 
-type JsonErrorFrame struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
-}
-
-type JsonEvent struct {
-	Received      time.Time                             `json:"received"`
-	RepoCommit    *atproto.SyncSubscribeRepos_Commit    `json:"repo_commit"`
-	RepoHandle    *atproto.SyncSubscribeRepos_Handle    `json:"repo_handle"`
-	RepoIdentity  *atproto.SyncSubscribeRepos_Identity  `json:"repo_identity"`
-	RepoAccount   *atproto.SyncSubscribeRepos_Account   `json:"repo_account"`
-	RepoInfo      *atproto.SyncSubscribeRepos_Info      `json:"repo_info"`
-	RepoMigrate   *atproto.SyncSubscribeRepos_Migrate   `json:"repo_migrate"`
-	RepoTombstone *atproto.SyncSubscribeRepos_Tombstone `json:"repo_tombstone"`
-	LabelLabels   *atproto.LabelSubscribeLabels_Labels  `json:"label_labels"`
-	LabelInfo     *atproto.LabelSubscribeLabels_Info    `json:"label_info"`
-	ErrorFrame    *JsonErrorFrame                       `json:"error_frame"`
-}
-
-type Writer struct {
+// A RotatingWriter writes a sequence of JSON-encodable events to a file.
+// The output file is rotated and compressed after a number of events.
+// On clean shutdown using Stop, the last file is compressed.
+type RotatingWriter struct {
 	baseDir          string
-	eventsIn         chan JsonEvent
+	eventsIn         chan any
 	logger           *slog.Logger
 	numEventsPerFile int
 
@@ -45,15 +28,15 @@ type Writer struct {
 	stop chan struct{}
 }
 
-func NewWriter(baseDir string, logger *slog.Logger, numEventsPerFile int) (*Writer, error) {
+func NewWriter(baseDir string, logger *slog.Logger, numEventsPerFile int) (*RotatingWriter, error) {
 	err := os.MkdirAll(baseDir, 0777)
 	if err != nil {
 		return nil, fmt.Errorf("unable to mkdir: %w", err)
 	}
 
-	w := &Writer{
+	w := &RotatingWriter{
 		baseDir:          baseDir,
-		eventsIn:         make(chan JsonEvent),
+		eventsIn:         make(chan any),
 		logger:           logger,
 		numEventsPerFile: numEventsPerFile,
 		stop:             make(chan struct{}),
@@ -62,11 +45,11 @@ func NewWriter(baseDir string, logger *slog.Logger, numEventsPerFile int) (*Writ
 	return w, nil
 }
 
-func (w *Writer) WriteEvent(e JsonEvent) {
+func (w *RotatingWriter) WriteEvent(e any) {
 	w.eventsIn <- e
 }
 
-func (w *Writer) Stop() error {
+func (w *RotatingWriter) Stop() error {
 	w.logger.Info("stopping writer")
 	close(w.eventsIn)
 
@@ -80,7 +63,7 @@ func (w *Writer) Stop() error {
 	return nil
 }
 
-func (w *Writer) backgroundCompress(f *os.File, originalPath string) (err error) {
+func (w *RotatingWriter) backgroundCompress(f *os.File, originalPath string) (err error) {
 	gzipPath := fmt.Sprintf("%s.gz", originalPath)
 
 	defer func() {
@@ -125,7 +108,7 @@ func (w *Writer) backgroundCompress(f *os.File, originalPath string) (err error)
 	return nil
 }
 
-func (w *Writer) createFile() (*os.File, string, error) {
+func (w *RotatingWriter) createFile() (*os.File, string, error) {
 	ts := time.Now().Unix()
 	p := path.Join(w.baseDir, fmt.Sprintf("%d.json", ts))
 
@@ -143,7 +126,7 @@ func (w *Writer) createFile() (*os.File, string, error) {
 	return f, p, err
 }
 
-func (w *Writer) maybeRotateFile() error {
+func (w *RotatingWriter) maybeRotateFile() error {
 	if w.curNumEvents >= w.numEventsPerFile {
 		// Rotate, avoid data race
 		curFile := w.curFile
@@ -170,7 +153,7 @@ func (w *Writer) maybeRotateFile() error {
 	return nil
 }
 
-func (w *Writer) Run() {
+func (w *RotatingWriter) Run() {
 	defer func() {
 		w.logger.Info("writer loop shut down")
 		close(w.stop)

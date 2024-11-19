@@ -38,7 +38,7 @@ type Subscriber struct {
 	labelerDid syntax.DID
 	labelerURI url.URL
 	logger     *slog.Logger
-	writer     *event.Writer
+	writer     *event.RotatingWriter
 	closed     chan error
 }
 
