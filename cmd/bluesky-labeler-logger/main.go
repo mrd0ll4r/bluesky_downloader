@@ -98,74 +98,6 @@ func (s *Subscriber) Run(ctx context.Context) error {
 	s.logger.Debug("dial successful, setting up subscription...", "url", u.String())
 
 	rsc := &events.RepoStreamCallbacks{
-		RepoCommit: func(evt *atproto.SyncSubscribeRepos_Commit) error {
-			defer func() {
-				if evt.Seq%50 == 0 {
-					if err := s.updateLastCursor(evt.Seq); err != nil {
-						s.logger.Error("failed to persist cursor", "err", err)
-					}
-				}
-			}()
-
-			s.logger.With("repo", evt.Repo, "rev", evt.Rev, "seq", evt.Seq).Warn("got REPO_COMMIT", "ops", evt.Ops)
-
-			return nil
-		},
-		RepoHandle: func(evt *atproto.SyncSubscribeRepos_Handle) error {
-			defer func() {
-				if evt.Seq%50 == 0 {
-					if err := s.updateLastCursor(evt.Seq); err != nil {
-						s.logger.Error("failed to persist cursor", "err", err)
-					}
-				}
-			}()
-
-			s.logger.With("did", evt.Did, "seq", evt.Seq).Warn("got REPO_HANDLE", "handle", evt.Handle)
-
-			return nil
-		},
-		RepoIdentity: func(evt *atproto.SyncSubscribeRepos_Identity) error {
-			defer func() {
-				if evt.Seq%50 == 0 {
-					if err := s.updateLastCursor(evt.Seq); err != nil {
-						s.logger.Error("failed to persist cursor", "err", err)
-					}
-				}
-			}()
-			s.logger.With("did", evt.Did, "seq", evt.Seq).Warn("got REPO_IDENTITY")
-
-			return nil
-		},
-		RepoInfo: func(evt *atproto.SyncSubscribeRepos_Info) error {
-			// TODO this does not have a sequence number, why?
-			s.logger.With("name", evt.Name).Warn("got REPO_INFO")
-
-			return nil
-		},
-		RepoMigrate: func(evt *atproto.SyncSubscribeRepos_Migrate) error {
-			defer func() {
-				if evt.Seq%50 == 0 {
-					if err := s.updateLastCursor(evt.Seq); err != nil {
-						s.logger.Error("failed to persist cursor", "err", err)
-					}
-				}
-			}()
-			s.logger.With("did", evt.Did, "seq", evt.Seq).Warn("got REPO_MIGRATE", "migrate_to", evt.MigrateTo)
-
-			return nil
-		},
-		RepoTombstone: func(evt *atproto.SyncSubscribeRepos_Tombstone) error {
-			defer func() {
-				if evt.Seq%50 == 0 {
-					if err := s.updateLastCursor(evt.Seq); err != nil {
-						s.logger.Error("failed to persist cursor", "err", err)
-					}
-				}
-			}()
-			s.logger.With("did", evt.Did, "seq", evt.Seq).Warn("got REPO_TOMBSTONE")
-
-			return nil
-		},
 		LabelLabels: func(evt *atproto.LabelSubscribeLabels_Labels) error {
 			defer func() {
 				if evt.Seq%50 == 0 {
@@ -187,7 +119,7 @@ func (s *Subscriber) Run(ctx context.Context) error {
 			return nil
 		},
 		LabelInfo: func(evt *atproto.LabelSubscribeLabels_Info) error {
-			// TODO this also has no sequence number...
+			// TODO this has no sequence number...
 
 			s.logger.Debug("LABEL_INFO", "name", evt.Name, "message", evt.Message)
 
