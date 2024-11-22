@@ -26,9 +26,13 @@ import (
 var (
 	USER_AGENT                  = "github.com/mrd0ll4r/bluesky_downloader/firehose_logger"
 	DEFAULT_OUTPUT_DIR          = "firehose_logs"
+	DEFAULT_FIREHOSE_REMOTE     = "wss://bsky.network"
 	DEFAULT_NUM_EVENTS_PER_FILE = uint(10_000)
 	DEFAULT_POSTGRES_DSN        = "postgres://bluesky_indexer:bluesky_indexer@localhost:5434/bluesky_indexer"
 )
+
+// Every how many events should we persist the cursor to the database?
+const SEQUENCE_NUMBER_PERSISTENCE_INTERVAL int64 = 500
 
 type Subscriber struct {
 	db                   *gorm.DB
@@ -36,6 +40,7 @@ type Subscriber struct {
 	logger               *slog.Logger
 	writer               *event.RotatingWriter
 	saveRepoCommitBlocks bool
+	resetCursor          bool
 	closed               chan error
 }
 
@@ -65,17 +70,21 @@ func (s *Subscriber) updateLastCursor(curs int64) error {
 
 func (s *Subscriber) Run(ctx context.Context, livenessChan chan struct{}) error {
 	defer func() { close(s.closed) }()
-	cur, err := s.getLastCursor()
+	lastCur, err := s.getLastCursor()
 	if err != nil {
 		return fmt.Errorf("get last cursor: %w", err)
+	}
+	if s.resetCursor {
+		s.logger.Info("resetting cursor")
+		lastCur = 0
 	}
 
 	d := websocket.DefaultDialer
 	u := s.bgsUrl
 	u.Scheme = "wss"
 	u.Path = "/xrpc/com.atproto.sync.subscribeRepos"
-	if cur != 0 {
-		u.RawQuery = fmt.Sprintf("cursor=%d", cur)
+	if lastCur != 0 {
+		u.RawQuery = fmt.Sprintf("cursor=%d", lastCur)
 	}
 	con, _, err := d.Dial(u.String(), http.Header{
 		"User-Agent": []string{USER_AGENT},
@@ -90,17 +99,30 @@ func (s *Subscriber) Run(ctx context.Context, livenessChan chan struct{}) error 
 		s.logger.Info("not saving block data for repo commits")
 	}
 
+	// Keep track of the cursor to persist if we shut down cleanly
+	cur := lastCur
+	first := true
+	updateCursorFunc := func(seqNo int64) {
+		if first {
+			s.logger.Info("got first message", "seqNo", seqNo, "requestedSeqNo", lastCur, "resetCursor", s.resetCursor)
+			if seqNo != lastCur && lastCur != 0 {
+				s.logger.Warn("probably missed messages", "seqNo", seqNo, "requestedSeqNo", lastCur)
+			}
+			first = false
+		}
+
+		if seqNo%SEQUENCE_NUMBER_PERSISTENCE_INTERVAL == 0 {
+			livenessChan <- struct{}{}
+
+			if err := s.updateLastCursor(seqNo); err != nil {
+				s.logger.Error("failed to persist cursor", "err", err)
+			}
+		}
+	}
+
 	rsc := &events.RepoStreamCallbacks{
 		RepoCommit: func(evt *atproto.SyncSubscribeRepos_Commit) error {
-			defer func() {
-				if evt.Seq%50 == 0 {
-					livenessChan <- struct{}{}
-
-					if err := s.updateLastCursor(evt.Seq); err != nil {
-						s.logger.Error("failed to persist cursor", "err", err)
-					}
-				}
-			}()
+			defer updateCursorFunc(evt.Seq)
 
 			cur = evt.Seq
 			logEvt := s.logger.With("repo", evt.Repo, "rev", evt.Rev, "seq", evt.Seq)
@@ -120,15 +142,7 @@ func (s *Subscriber) Run(ctx context.Context, livenessChan chan struct{}) error 
 			return nil
 		},
 		RepoHandle: func(evt *atproto.SyncSubscribeRepos_Handle) error {
-			defer func() {
-				if evt.Seq%50 == 0 {
-					livenessChan <- struct{}{}
-
-					if err := s.updateLastCursor(evt.Seq); err != nil {
-						s.logger.Error("failed to persist cursor", "err", err)
-					}
-				}
-			}()
+			defer updateCursorFunc(evt.Seq)
 
 			cur = evt.Seq
 			logEvt := s.logger.With("did", evt.Did, "seq", evt.Seq)
@@ -143,15 +157,7 @@ func (s *Subscriber) Run(ctx context.Context, livenessChan chan struct{}) error 
 			return nil
 		},
 		RepoIdentity: func(evt *atproto.SyncSubscribeRepos_Identity) error {
-			defer func() {
-				if evt.Seq%50 == 0 {
-					livenessChan <- struct{}{}
-
-					if err := s.updateLastCursor(evt.Seq); err != nil {
-						s.logger.Error("failed to persist cursor", "err", err)
-					}
-				}
-			}()
+			defer updateCursorFunc(evt.Seq)
 
 			cur = evt.Seq
 			logEvt := s.logger.With("did", evt.Did, "seq", evt.Seq)
@@ -166,15 +172,7 @@ func (s *Subscriber) Run(ctx context.Context, livenessChan chan struct{}) error 
 			return nil
 		},
 		RepoAccount: func(evt *atproto.SyncSubscribeRepos_Account) error {
-			defer func() {
-				if evt.Seq%50 == 0 {
-					livenessChan <- struct{}{}
-
-					if err := s.updateLastCursor(evt.Seq); err != nil {
-						s.logger.Error("failed to persist cursor", "err", err)
-					}
-				}
-			}()
+			defer updateCursorFunc(evt.Seq)
 
 			cur = evt.Seq
 			logEvt := s.logger.With("did", evt.Did, "seq", evt.Seq)
@@ -203,15 +201,7 @@ func (s *Subscriber) Run(ctx context.Context, livenessChan chan struct{}) error 
 			return nil
 		},
 		RepoMigrate: func(evt *atproto.SyncSubscribeRepos_Migrate) error {
-			defer func() {
-				if evt.Seq%50 == 0 {
-					livenessChan <- struct{}{}
-
-					if err := s.updateLastCursor(evt.Seq); err != nil {
-						s.logger.Error("failed to persist cursor", "err", err)
-					}
-				}
-			}()
+			defer updateCursorFunc(evt.Seq)
 
 			cur = evt.Seq
 			logEvt := s.logger.With("did", evt.Did, "seq", evt.Seq)
@@ -226,15 +216,7 @@ func (s *Subscriber) Run(ctx context.Context, livenessChan chan struct{}) error 
 			return nil
 		},
 		RepoTombstone: func(evt *atproto.SyncSubscribeRepos_Tombstone) error {
-			defer func() {
-				if evt.Seq%50 == 0 {
-					livenessChan <- struct{}{}
-
-					if err := s.updateLastCursor(evt.Seq); err != nil {
-						s.logger.Error("failed to persist cursor", "err", err)
-					}
-				}
-			}()
+			defer updateCursorFunc(evt.Seq)
 
 			cur = evt.Seq
 			logEvt := s.logger.With("did", evt.Did, "seq", evt.Seq)
@@ -249,15 +231,7 @@ func (s *Subscriber) Run(ctx context.Context, livenessChan chan struct{}) error 
 			return nil
 		},
 		LabelLabels: func(evt *atproto.LabelSubscribeLabels_Labels) error {
-			defer func() {
-				if evt.Seq%50 == 0 {
-					livenessChan <- struct{}{}
-
-					if err := s.updateLastCursor(evt.Seq); err != nil {
-						s.logger.Error("failed to persist cursor", "err", err)
-					}
-				}
-			}()
+			defer updateCursorFunc(evt.Seq)
 
 			cur = evt.Seq
 			logEvt := s.logger.With("seq", evt.Seq)
@@ -347,7 +321,9 @@ func setupDB(dsn string) (*gorm.DB, error) {
 	return db, nil
 }
 
-func setupSubscriber(logger *slog.Logger, baseOutputDir string, postgresDsn string, numEventsPerFile int, saveBlocks bool) (*Subscriber, error) {
+func setupSubscriber(logger *slog.Logger, baseOutputDir string,
+	firehoseRemote string, postgresDsn string, numEventsPerFile int,
+	saveBlocks bool, resetCursor bool) (*Subscriber, error) {
 	db, err := setupDB(postgresDsn)
 	if err != nil {
 		return nil, err
@@ -359,7 +335,7 @@ func setupSubscriber(logger *slog.Logger, baseOutputDir string, postgresDsn stri
 		return nil, err
 	}
 
-	u, err := url.Parse("https://bsky.network")
+	u, err := url.Parse(firehoseRemote)
 	if err != nil {
 		return nil, err
 	}
@@ -375,6 +351,7 @@ func setupSubscriber(logger *slog.Logger, baseOutputDir string, postgresDsn stri
 		logger:               logger.With("component", "subscriber"),
 		writer:               writer,
 		saveRepoCommitBlocks: saveBlocks,
+		resetCursor:          resetCursor,
 		closed:               make(chan error),
 	}
 
@@ -386,6 +363,8 @@ func setupSubscriber(logger *slog.Logger, baseOutputDir string, postgresDsn stri
 func main() {
 	var outputDir = flag.String("outdir", DEFAULT_OUTPUT_DIR, "Path to the base output directory")
 	var postgresDsn = flag.String("db", DEFAULT_POSTGRES_DSN, "DSN to connect to a postgres database")
+	var firehoseRemote = flag.String("firehose", DEFAULT_FIREHOSE_REMOTE, "Firehose to connect to")
+	var resetCursor = flag.Bool("reset-cursor", false, "Reset stored cursor to current cursor reported by the remote")
 	var numEntriesPerFile = flag.Uint("entries-per-file", DEFAULT_NUM_EVENTS_PER_FILE, "The number of events after which the output file is rotated")
 	var debug = flag.Bool("debug", false, "Whether to enable debug logging")
 	var saveBlocks = flag.Bool("save-blocks", false, "Whether to save binary block data for repo commits. This can take a lot of space.")
@@ -399,7 +378,7 @@ func main() {
 
 	flag.Parse()
 
-	if len(*outputDir) == 0 || len(*postgresDsn) == 0 || *numEntriesPerFile == 0 {
+	if len(*outputDir) == 0 || len(*firehoseRemote) == 0 || len(*postgresDsn) == 0 || *numEntriesPerFile == 0 {
 		flag.Usage()
 		os.Exit(2)
 	}
@@ -414,7 +393,7 @@ func main() {
 	}))
 	slog.SetDefault(logger)
 
-	subscriber, err := setupSubscriber(logger, *outputDir, *postgresDsn, int(*numEntriesPerFile), *saveBlocks)
+	subscriber, err := setupSubscriber(logger, *outputDir, *firehoseRemote, *postgresDsn, int(*numEntriesPerFile), *saveBlocks, *resetCursor)
 	if err != nil {
 		logger.Error("unable to set up subscriber", "err", err)
 		os.Exit(1)

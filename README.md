@@ -84,7 +84,9 @@ Flags:
       --db string               DSN to connect to a postgres database (default "postgres://bluesky_indexer:bluesky_indexer@localhost:5434/bluesky_indexer")
       --debug                   Whether to enable debug logging
       --entries-per-file uint   The number of events after which the output file is rotated (default 10000)
+      --firehose string         Firehose to connect to (default "wss://bsky.network")
       --outdir string           Path to the base output directory (default "firehose_logs")
+      --reset-cursor            Reset stored cursor to current cursor reported by the remote
       --save-blocks             Whether to save binary block data for repo commits. This can take a lot of space.
 ```
 Quit with `Ctrl-C`.
@@ -103,9 +105,21 @@ This is encoded as base64, and quite large.
 For longer-running operations, unless absolutely required, it's recommended to turn this off.
 
 A cursor pointing to the last processed sequence number is saved in the Postgres database.
-This is updated every 50 events, and when the program shuts down.
+This is updated every 500 events, and when the program shuts down.
 This should make it possible to restart without losing any events.
-In case of a crash, at most 50 events could be duplicated at the end of the old and the beginning of the new log.
+In case of a crash, at most 500 events could be duplicated at the end of the old and the beginning of the new log.
+
+If `--reset-cursor` is provided, the persisted cursor is not used.
+Instead, the stream of events from the Firehose is consumed without providing a cursor, i.e., from the current point on forwards.
+
+The logger contains a liveness check.
+If no messages from the Firehose are received and/or processed in five minutes, the logger automatically shuts down.
+This is a clean shutdown, i.e., the sequence number of the last processed event is persisted.
+On next startup, playback resumes from this cursor.
+
+**Note**: Due to an earlier off-by-one error, clean restarts may have resulted in one event overlapping between the two runs.
+Also, around November 22nd, the Firehose experienced some problems and emitted duplicate events.
+In any case, it's probably a good idea to *a)* filter out duplicate sequence numbers and *b)* not rely on the Firehose to have all events of all types during those days.
 
 ### `bluesky-repo-downloader`
 
