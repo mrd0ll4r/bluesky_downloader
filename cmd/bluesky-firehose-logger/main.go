@@ -58,7 +58,9 @@ func (s *Subscriber) getLastCursor() (int64, error) {
 }
 
 func (s *Subscriber) updateLastCursor(curs int64) error {
-	return s.db.Model(LastSeq{}).Where("id = 1").Update("seq", curs).Error
+	// TODO I think we need to +1 this?
+	// It seems the firehose returns events with seqNo >= since.
+	return s.db.Model(LastSeq{}).Where("id = 1").Update("seq", curs+1).Error
 }
 
 func (s *Subscriber) Run(ctx context.Context, livenessChan chan struct{}) error {
