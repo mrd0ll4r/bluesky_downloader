@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path"
+	"sync"
 	"time"
 )
 
@@ -25,6 +26,8 @@ type RotatingWriter struct {
 	curPath      string
 	curNumEvents int
 
+	// WaitGroup to track background compressions.
+	wg   sync.WaitGroup
 	stop chan struct{}
 }
 
@@ -54,8 +57,10 @@ func (w *RotatingWriter) Stop() error {
 	close(w.eventsIn)
 
 	<-w.stop
-	w.logger.Info("writer stopped, compressing last written file...")
+	w.logger.Info("writer stopped, waiting for outstanding background compressions...")
+	w.wg.Wait()
 
+	w.logger.Info("compressing last written file...")
 	if w.curFile != nil {
 		return w.backgroundCompress(w.curFile, w.curPath)
 	}
@@ -131,7 +136,9 @@ func (w *RotatingWriter) maybeRotateFile() error {
 		// Rotate, avoid data race
 		curFile := w.curFile
 		curPath := w.curPath
+		w.wg.Add(1)
 		go func() {
+			defer w.wg.Done()
 			err := w.backgroundCompress(curFile, curPath)
 			if err != nil {
 				w.logger.Error("unable to compress file", "err", err)
