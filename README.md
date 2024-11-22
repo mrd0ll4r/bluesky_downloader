@@ -1,10 +1,10 @@
 # Bluesky Tools
 
-Tools to Download and save data from the Bluesky Network.
+Tools to download and save data from the Bluesky Network.
 
 These were used for data collection for the paper **Looking AT the Blue Skies of Bluesky**,
 which was presented at **IMC'24** ([link](https://dl.acm.org/doi/10.1145/3646547.3688407), [arXiv](https://arxiv.org/abs/2408.12449)).
-If you use these tools for academic work, please cite our publication:
+If you use these tools or datasets for academic work, please cite our publication:
 ```
 @inproceedings{10.1145/3646547.3688407,
 author = {Balduf, Leonhard and Sokoto, Saidu and Ascigil, Onur and Tyson, Gareth and Scheuermann, Bj\"{o}rn and Korczy\'{n}ski, Maciej and Castro, Ignacio and Kr\'{o}l, Michaundefined},
@@ -61,7 +61,7 @@ It needs a Postgres database running somewhere, see [init_db.sh](init_db.sh) for
 This can be achieved by running `docker compose up`.
 The database stores the latest cursor per labeler DID.
 
-The tool connects to the labeler endpoint as specified in the DID document of the given account
+The tool connects to the labeler endpoint specified in the DID document of the given account
 and logs all received messages to disk with a timestamp attached to them.
 The files are saved to `outdir`, with subdirectories per DID.
 Each log file is named after the Unix timestamp at which it was created.
