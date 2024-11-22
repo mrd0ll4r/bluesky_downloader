@@ -99,7 +99,7 @@ func (s *Subscriber) Run(ctx context.Context, livenessChan chan struct{}) error 
 		s.logger.Info("not saving block data for repo commits")
 	}
 
-	// Keep track of the cursor to persist if we shut down cleanly
+	// Keep track of the cursor occasionally.
 	cur := lastCur
 	first := true
 	updateCursorFunc := func(seqNo int64) {
@@ -232,10 +232,11 @@ func (s *Subscriber) Run(ctx context.Context, livenessChan chan struct{}) error 
 		},
 		LabelLabels: func(evt *atproto.LabelSubscribeLabels_Labels) error {
 			defer updateCursorFunc(evt.Seq)
+			// TODO this should never be received via the Firehose
 
 			cur = evt.Seq
 			logEvt := s.logger.With("seq", evt.Seq)
-			logEvt.Debug("LABEL_LABELS", "labels", evt.Labels)
+			logEvt.Warn("unexpected LABEL_LABELS", "labels", evt.Labels)
 
 			jsonEvent := event.JsonEvent{
 				Received:    time.Now(),
@@ -247,8 +248,9 @@ func (s *Subscriber) Run(ctx context.Context, livenessChan chan struct{}) error 
 		},
 		LabelInfo: func(evt *atproto.LabelSubscribeLabels_Info) error {
 			// TODO this also has no sequence number...
+			// TODO this should never be received via the Firehose
 
-			s.logger.Debug("LABEL_INFO", "name", evt.Name, "message", evt.Message)
+			s.logger.Warn("unexpected LABEL_INFO", "name", evt.Name, "message", evt.Message)
 
 			jsonEvent := event.JsonEvent{
 				Received:  time.Now(),
@@ -259,7 +261,7 @@ func (s *Subscriber) Run(ctx context.Context, livenessChan chan struct{}) error 
 			return nil
 		},
 		Error: func(evt *events.ErrorFrame) error {
-			s.logger.Info("ERROR_FRAME", "evt", evt)
+			s.logger.Warn("ERROR_FRAME", "evt", evt)
 
 			jsonEvent := event.JsonEvent{
 				Received: time.Now(),
