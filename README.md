@@ -67,6 +67,10 @@ The files are saved to `outdir`, with subdirectories per DID.
 Each log file is named after the Unix timestamp at which it was created.
 Every `entries-per-file` entries, the log file is rotated and compressed.
 On shutdown, the current file is compressed.
+During compression, a `<filename>.gzip.tmp` file is created and written to.
+This file is renamed to `<filename>.gzip` once compression finishes.
+This is useful when using `rsync` to move log files periodically:
+You can specify `--exclude='*.json' --exclude='*.tmp'` to only move completed, compressed logs.
 
 A cursor pointing to the last processed sequence number is saved in the Postgres database.
 This is updated every 50 events, and when the program shuts down.
@@ -99,6 +103,7 @@ The files are saved to `outdir`.
 Each log file is named after the Unix timestamp at which it was created.
 Every `entries-per-file` entries, the log file is rotated and compressed.
 On shutdown, the current file is compressed.
+Compression behaves the same as the Labeler logger.
 
 If `--save-blocks` is provided, the block data attached to each repo commit is saved in the output.
 This is encoded as base64, and quite large.

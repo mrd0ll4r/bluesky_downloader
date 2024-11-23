@@ -70,17 +70,36 @@ func (w *RotatingWriter) Stop() error {
 
 func (w *RotatingWriter) backgroundCompress(f *os.File, originalPath string) (err error) {
 	gzipPath := fmt.Sprintf("%s.gz", originalPath)
+	tmpPath := fmt.Sprintf("%s.tmp", gzipPath)
 
 	defer func() {
 		if err != nil {
-			w.logger.Warn("background compression failed, not removing source file, attempting to remove potentially-incomplete gzipped file", "originalPath", originalPath)
-			e := os.Remove(gzipPath)
+			w.logger.Warn("background compression failed, not removing source file, attempting to remove potentially-incomplete temporary gzipped file",
+				"originalPath", originalPath, "tmpPath", tmpPath, "err", err)
+			e := os.Remove(tmpPath)
 			if e != nil {
-				w.logger.Warn("unable to remove gzipped file", "err", e)
+				w.logger.Warn("unable to remove temporary gzipped file", "err", e)
 			}
 		} else {
-			w.logger.Info("background compression complete, removing source file", "originalPath", originalPath)
-			e := os.Remove(originalPath)
+			w.logger.Info("background compression complete, renaming temporary file and removing source file",
+				"originalPath", originalPath, "tmpPath", tmpPath, "gzipPath", gzipPath)
+			// This should usually be an atomic rename, which is nice and probably doesn't fail.
+			e := os.Rename(tmpPath, gzipPath)
+			if e != nil {
+				w.logger.Warn("unable to rename temporary gzipped file", "tmpPath", tmpPath, "gzipPath", gzipPath, "err", e)
+				// If the rename _does_ fail, we need to remove the temp file and keep the original.
+				e = os.Remove(tmpPath)
+				if e != nil {
+					w.logger.Warn("unable to remove temporary gzipped file", "err", e)
+				}
+				// Maybe this exists and can/should be removed?
+				e = os.Remove(gzipPath)
+				if e != nil {
+					w.logger.Warn("unable to remove gzipped file", "err", e)
+				}
+				return
+			}
+			e = os.Remove(originalPath)
 			if e != nil {
 				w.logger.Warn("unable to remove original file", "err", e)
 			}
@@ -88,9 +107,9 @@ func (w *RotatingWriter) backgroundCompress(f *os.File, originalPath string) (er
 	}()
 	defer f.Close()
 
-	gzipF, err := os.Create(gzipPath)
+	gzipF, err := os.Create(tmpPath)
 	if err != nil {
-		return fmt.Errorf("unable to create gzip file: %w", err)
+		return fmt.Errorf("unable to create temporary gzip file: %w", err)
 	}
 	defer gzipF.Close()
 
