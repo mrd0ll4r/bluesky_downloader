@@ -9,7 +9,6 @@ import (
 	"github.com/bluesky-social/indigo/events"
 	"github.com/bluesky-social/indigo/events/schedulers/sequential"
 	"github.com/gorilla/websocket"
-	"github.com/labstack/gommon/log"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"log/slog"
@@ -446,9 +445,9 @@ func main() {
 	select {
 	case <-c: // Ctrl-C, ok...
 	case <-deadShutdownChan:
-		log.Error("liveness check failed, shutting down...")
+		logger.Error("liveness check failed, shutting down...")
 	case err = <-subscriber.closed:
-		log.Error("subscriber died, shutting down", "err", err)
+		logger.Error("subscriber died, shutting down", "err", err)
 	}
 
 	fmt.Println("Shutting down...")
