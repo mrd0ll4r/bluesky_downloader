@@ -126,6 +126,26 @@ On next startup, playback resumes from this cursor.
 Also, around November 22nd, the Firehose experienced some problems and emitted duplicate events.
 In any case, it's probably a good idea to *a)* filter out duplicate sequence numbers and *b)* not rely on the Firehose to have all events of all types during those days.
 
+### `bluesky-extract-commits-from-firehose-logs`
+
+This extracts commits from Firehose logs and prints them as JSON.
+The output format is similar, but not equal to the Jetstream output.
+This reads the blocks of the commit.
+As such, the Firehose logs **must include blocks**.
+This currently **does not verify signatures**, because that's (probably?) already done at the level of the official Firehose.
+
+Basic usage:
+```
+./bluesky-extract-commits-from-firehose-logs [flags]
+Flags:
+      --debug   Whether to enable debug logging
+```
+
+It reads Firehose logs as JSON via `stdin` and outputs the extracted and translated commits as JSON to `stdout`.
+In case it completely fails to read the commit CAR file, it only includes basic info (DID, timestamp, commit CID) and adds an error message and the original binary block data instead of the commit content.
+In case it decodes the CAR file but fails to parse any of the commit operations, it includes all operations, potentially annotated with errors, and the original binary block data.
+Similarly, if the commit contains links to blobs, the link CIDs are included, as well as the original block data.
+
 ### `bluesky-repo-downloader`
 
 This goes and downloads all current repos for all known DIDs to disk.
