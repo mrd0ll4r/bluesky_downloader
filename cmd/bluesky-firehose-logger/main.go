@@ -280,6 +280,7 @@ func (s *Subscriber) Run(ctx context.Context, livenessChan chan struct{}) error 
 			"firehose-logger",
 			rsc.EventHandler,
 		),
+		s.logger,
 	)
 	if err != nil && !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "closed network connection") {
 		s.logger.Error("error listening for events", "err", err)
