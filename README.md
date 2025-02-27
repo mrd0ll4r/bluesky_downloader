@@ -155,6 +155,10 @@ It uses a database to keep track of which revisions (actually which commit CID) 
 Currently, it probably can't keep up with changes.
 Also, the format produces millions of directories with a few files in them each, which is not great.
 
+**Note:** It is possible that this doesn't work at all anymore.
+It used to be possible to query repositories from the relay, but that might not be the case anymore.
+It is still possible to download repositories, but probably only from the responsible PDS.
+
 Basic usage:
 ```
 ./bluesky-repo-downloader [flags]
