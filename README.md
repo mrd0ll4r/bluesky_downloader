@@ -1,6 +1,8 @@
 # Bluesky Tools
 
 Tools to download and save data from the Bluesky Network.
+For **very detailed setup instructions** instructions, please see [SETUP](SETUP.md).
+For **a first overview**, please read this README.
 
 These were used for data collection for the paper **Looking AT the Blue Skies of Bluesky**,
 which was presented at **IMC'24** ([link](https://dl.acm.org/doi/10.1145/3646547.3688407), [arXiv](https://arxiv.org/abs/2408.12449)).
@@ -35,7 +37,8 @@ Building the binaries can be done via `./build.sh`.
 
 The `dist/` directory contains a few useful scripts and systemd service files.
 The systemd services files for labeler loggers are intended to be installed per user.
-Copy the files to ` ~/.config/systemd/user/` and run `systemctl --user daemon-reload`.
+Adjust paths as needed and copy the files to ` ~/.config/systemd/user/`
+and run `systemctl --user daemon-reload`.
 After starting the services, you can list them with `systemctl --user list-units --type=service`.
 
 ## Usage
@@ -145,52 +148,6 @@ It reads Firehose logs as JSON via `stdin` and outputs the extracted and transla
 In case it completely fails to read the commit CAR file, it only includes basic info (DID, timestamp, commit CID) and adds an error message and the original binary block data instead of the commit content.
 In case it decodes the CAR file but fails to parse any of the commit operations, it includes all operations, potentially annotated with errors, and the original binary block data.
 Similarly, if the commit contains links to blobs, the link CIDs are included, as well as the original block data.
-
-### `bluesky-repo-downloader`
-
-This goes and downloads all current repos for all known DIDs to disk.
-It uses a database to keep track of which revisions (actually which commit CID) we have for a given repo, to avoid re-downloading unchanged repos.
-
-**Note:** This used to work fine in April 2024 when we wrote the paper.
-Currently, it probably can't keep up with changes.
-Also, the format produces millions of directories with a few files in them each, which is not great.
-
-**Note:** It is possible that this doesn't work at all anymore.
-It used to be possible to query repositories from the relay, but that might not be the case anymore.
-It is still possible to download repositories, but probably only from the responsible PDS.
-
-Basic usage:
-```
-./bluesky-repo-downloader [flags]
-Flags:
-      --db string       DSN to connect to a postgres database (default "postgres://bluesky_indexer:bluesky_indexer@localhost:5434/bluesky_indexer")
-      --debug           Whether to enable debug logging
-      --outdir string   Path to the base output directory (default "repos")
-      --repoDiscovery   Whether to enable repo discovery
-```
-Quit with `Ctrl-C`.
-
-It needs a Postgres database running somewhere, see [init_db.sh](init_db.sh) for initial setup to use the default configuration.
-This can be achieved by running `docker compose up`.
-
-If you enable repo discovery, it uses `sync.listRepos` on the BGS to get a list of all users and their current repo version.
-If the version does not match the one we have downloaded, a job for the repo will be enqueued.
-
-The downloader then iterates through all enqueued jobs and downloads the latest revision of their repo.
-Data is downloaded to the `outdir` directory.
-Subdirectories are created for DID schemata, and PLC DIDs are further divided as such:
-The first four letters of the string-encoded DID value are used to index one subdirectory each.
-Finally, the value is listed again.
-For example, the DID `did:plc:ewvi7nxzyoun6zhxrhs64oiz` would be saved at
-`<outdir>/did/plc/e/w/v/i/ewvi7nxzyoun6zhxrhs64oiz/repo_revisions/<revision>.json.gz`.
-A copy of the raw car file of that revision is placed next to it as `<revision>.car.gz`.
-
-It is possible to stop processing at any time via `SIGINT` and restart from where it left off.
-
-#### TODO
-
-- We could easily implement downloading diffs to keep these up to date, maybe?
-    Not worth at the moment -- we'd still need to iterate over `sync.listRepos` to get revision mismatches and process each of those repos individually.
 
 ## License
 
