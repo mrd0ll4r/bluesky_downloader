@@ -17,18 +17,12 @@ type JsonErrorFrame struct {
 //
 // TODO add RepoSync once it's rolled out.
 type JsonEvent struct {
-	Received   time.Time                          `json:"received"`
-	RepoCommit *atproto.SyncSubscribeRepos_Commit `json:"repo_commit,omitempty"`
-	// DEPRECATED
-	RepoHandle   *atproto.SyncSubscribeRepos_Handle   `json:"repo_handle,omitempty"`
+	Received     time.Time                            `json:"received"`
+	RepoCommit   *atproto.SyncSubscribeRepos_Commit   `json:"repo_commit,omitempty"`
 	RepoIdentity *atproto.SyncSubscribeRepos_Identity `json:"repo_identity,omitempty"`
 	RepoAccount  *atproto.SyncSubscribeRepos_Account  `json:"repo_account,omitempty"`
 	RepoInfo     *atproto.SyncSubscribeRepos_Info     `json:"repo_info,omitempty"`
-	// DEPRECATED
-	RepoMigrate *atproto.SyncSubscribeRepos_Migrate `json:"repo_migrate,omitempty"`
-	// DEPRECATED
-	RepoTombstone *atproto.SyncSubscribeRepos_Tombstone `json:"repo_tombstone,omitempty"`
-	LabelLabels   *atproto.LabelSubscribeLabels_Labels  `json:"label_labels,omitempty"`
-	LabelInfo     *atproto.LabelSubscribeLabels_Info    `json:"label_info,omitempty"`
-	ErrorFrame    *JsonErrorFrame                       `json:"error_frame,omitempty"`
+	LabelLabels  *atproto.LabelSubscribeLabels_Labels `json:"label_labels,omitempty"`
+	LabelInfo    *atproto.LabelSubscribeLabels_Info   `json:"label_info,omitempty"`
+	ErrorFrame   *JsonErrorFrame                      `json:"error_frame,omitempty"`
 }

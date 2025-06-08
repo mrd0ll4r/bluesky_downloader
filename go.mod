@@ -5,7 +5,7 @@ go 1.23
 toolchain go1.23.2
 
 require (
-	github.com/bluesky-social/indigo v0.0.0-20250417233640-6b0010a646ae
+	github.com/bluesky-social/indigo v0.0.0-20250606055443-008e4ed915ad
 	github.com/carlmjohnson/versioninfo v0.22.5
 	github.com/gorilla/websocket v1.5.1
 	github.com/ipfs/go-cid v0.4.1

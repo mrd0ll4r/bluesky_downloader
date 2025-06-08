@@ -140,21 +140,6 @@ func (s *Subscriber) Run(ctx context.Context, livenessChan chan struct{}) error 
 
 			return nil
 		},
-		RepoHandle: func(evt *atproto.SyncSubscribeRepos_Handle) error {
-			defer updateCursorFunc(evt.Seq)
-
-			cur = evt.Seq
-			logEvt := s.logger.With("did", evt.Did, "seq", evt.Seq)
-			logEvt.Debug("REPO_HANDLE", "handle", evt.Handle)
-
-			jsonEvent := event.JsonEvent{
-				Received:   time.Now(),
-				RepoHandle: evt,
-			}
-			s.writer.WriteEvent(jsonEvent)
-
-			return nil
-		},
 		RepoIdentity: func(evt *atproto.SyncSubscribeRepos_Identity) error {
 			defer updateCursorFunc(evt.Seq)
 
@@ -194,36 +179,6 @@ func (s *Subscriber) Run(ctx context.Context, livenessChan chan struct{}) error 
 			jsonEvent := event.JsonEvent{
 				Received: time.Now(),
 				RepoInfo: evt,
-			}
-			s.writer.WriteEvent(jsonEvent)
-
-			return nil
-		},
-		RepoMigrate: func(evt *atproto.SyncSubscribeRepos_Migrate) error {
-			defer updateCursorFunc(evt.Seq)
-
-			cur = evt.Seq
-			logEvt := s.logger.With("did", evt.Did, "seq", evt.Seq)
-			logEvt.Debug("REPO_MIGRATE", "migrate_to", evt.MigrateTo)
-
-			jsonEvent := event.JsonEvent{
-				Received:    time.Now(),
-				RepoMigrate: evt,
-			}
-			s.writer.WriteEvent(jsonEvent)
-
-			return nil
-		},
-		RepoTombstone: func(evt *atproto.SyncSubscribeRepos_Tombstone) error {
-			defer updateCursorFunc(evt.Seq)
-
-			cur = evt.Seq
-			logEvt := s.logger.With("did", evt.Did, "seq", evt.Seq)
-			logEvt.Debug("REPO_TOMBSTONE")
-
-			jsonEvent := event.JsonEvent{
-				Received:      time.Now(),
-				RepoTombstone: evt,
 			}
 			s.writer.WriteEvent(jsonEvent)
 
