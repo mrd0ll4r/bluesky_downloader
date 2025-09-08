@@ -1,11 +1,11 @@
 module bluesky-downloader
 
-go 1.23
+go 1.24
 
-toolchain go1.23.2
+toolchain go1.24.7
 
 require (
-	github.com/bluesky-social/indigo v0.0.0-20250606055443-008e4ed915ad
+	github.com/bluesky-social/indigo v0.0.0-20250903055927-b7ac82546b27
 	github.com/carlmjohnson/versioninfo v0.22.5
 	github.com/gorilla/websocket v1.5.1
 	github.com/ipfs/go-cid v0.4.1

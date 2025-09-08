@@ -14,10 +14,9 @@ type JsonErrorFrame struct {
 
 // A JsonEvent is an event logged from any of the ATProto event streams, such
 // as the Firehose or a Labeler's stream of labels.
-//
-// TODO add RepoSync once it's rolled out.
 type JsonEvent struct {
 	Received     time.Time                            `json:"received"`
+	RepoSync     *atproto.SyncSubscribeRepos_Sync     `json:"repo_sync,omitempty"`
 	RepoCommit   *atproto.SyncSubscribeRepos_Commit   `json:"repo_commit,omitempty"`
 	RepoIdentity *atproto.SyncSubscribeRepos_Identity `json:"repo_identity,omitempty"`
 	RepoAccount  *atproto.SyncSubscribeRepos_Account  `json:"repo_account,omitempty"`
