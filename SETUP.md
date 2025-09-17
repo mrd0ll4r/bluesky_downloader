@@ -310,6 +310,18 @@ echo 17179869184 | sudo tee /sys/module/zfs/parameters/zfs_arc_max
 sudo update-initramfs -u -k all
 ```
 
+### Swapping
+
+We don't want this system to swap out pages, as our swap disk is very slow.
+The best way to avoid this is probably with proper memory limits and configuration of the services.
+I did some things, and they helped, but I also told the system not to swap a lot if possible.
+
+```
+sudo sysctl vm.swappiness=5
+```
+
+and add the same to `/etc/sysctl.conf`.
+
 ### Indexer
 
 ```bash
