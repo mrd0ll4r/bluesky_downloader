@@ -370,16 +370,16 @@ services:
     ports:
       - "$VPN_IP:5432:5432"
     command: [
-      "-c", "max_connections=500",
-      "-c", "max_parallel_workers_per_gather=8",
-      "-c", "shared_buffers=10GB",
-      "-c", "work_mem=1GB",
+      "-c", "max_connections=200",
+      "-c", "max_parallel_workers_per_gather=2",
+      "-c", "shared_buffers=6GB",
+      "-c", "work_mem=256MB",
       "-c", "maintenance_work_mem=1GB",
-      "-c", "vacuum_buffer_usage_limit=128MB",
+      "-c", "vacuum_buffer_usage_limit=256MB",
       "-c", "autovacuum_vacuum_cost_delay=0",
-      "-c", "max_wal_size=4GB"
+      "-c", "max_wal_size=3GB"
       ]
-    shm_size: '16gb'
+    shm_size: '10gb'
     oom_score_adj: -200
     stop_grace_period: 24h
 
@@ -394,24 +394,41 @@ services:
     environment:
       LISTER_SCYLLADB_ADDR: ""
     oom_score_adj: 100
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: '256M'
 
   consumer:
     environment:
       CONSUMER_SCYLLADB_ADDR: ""
     oom_score_adj: 100
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: '512M'
 
   pds-discovery:
     oom_score_adj: 100
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: '256M'
 
   # Change the default number of indexer threads
   record-indexer:
     environment:
-      INDEXER_WORKERS: 20
+      INDEXER_WORKERS: 50
       INDEXER_SCYLLADB_ADDR: ""
+      GOMEMLIMIT: 6GiB
     deploy:
       resources:
         limits:
-          memory: 8G
+          cpus: '8'
+          memory: 6G
     oom_score_adj: 200
   
   prometheus:
